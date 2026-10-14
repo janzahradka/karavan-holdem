@@ -165,6 +165,12 @@ td.n{text-align:right}
 .rstep{display:flex;align-items:center;gap:8px}
 .rstep input[type=range]{flex:1;min-width:0}
 .rstep .btn.small{min-width:52px}
+.mehead{min-height:96px}
+.meinfo{gap:1px}
+.meinfo .hn,.meinfo .mestatus{min-height:1.4em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meinfo .yourturn{font-size:16px}
+.raise.off{opacity:.45}
+.btn.armed{background:var(--red);color:#fff;border-color:transparent}
 input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-display);font-size:22px;max-width:9ch}
 </style>
 </head>
@@ -638,6 +644,7 @@ let S = null;         // stav, který tenhle telefon zobrazuje
 let online = [];      // id připojených hráčů
 let connected = false;
 let tab = 'table', hideCards = false, armed = null, raiseVal = null, lastTurnKey = '';
+const ARM_MS = 800; let turnStartAt = 0;
 
 // ================= SPOJENÍ (MQTT přes WebSocket, dva brokery současně) =================
 const TEST_BROKER = new URLSearchParams(location.search).get('broker');
@@ -1143,54 +1150,59 @@ function renderMe(){
   if (live && s && myId === h.sbId) tagsMe.push('<span class="tag">SB</span>');
   if (live && s && myId === h.bbId) tagsMe.push('<span class="tag">BB</span>');
 
-  let actions = '';
-  if (myTurn){
-    const toCall = h.currentBet - s.bet;
-    const maxTo = s.bet + me.chips;
-    const dis = connected ? '' : 'disabled';
-    actions += `<div class="acts"><button class="btn danger" data-a="fold" ${dis}>Složit</button>`;
-    actions += toCall > 0
-      ? `<button class="btn" data-a="call" ${dis}>${toCall >= me.chips ? 'All-in ' + me.chips : 'Dorovnat ' + toCall}</button>`
-      : `<button class="btn" data-a="check" ${dis}>Čekat</button>`;
-    actions += `</div>`;
-    if (maxTo > h.currentBet){
-      const minTo = Math.min(h.currentBet + h.minRaise, maxTo);
-      const pot = h.seats.reduce((a, x) => a + x.total, 0);
-      // povolené částky: minimum, pak násobky malého blindu, nakonec all-in
-      const st = h.sb || S.config.sb || 1;
-      const vals = [minTo];
-      for (let m = Math.ceil((minTo + 1) / st) * st; m < maxTo; m += st) vals.push(m);
-      if (maxTo > minTo) vals.push(maxTo);
-      const snap = x => { let best = vals[0]; for (const v of vals) if (Math.abs(v - x) < Math.abs(best - x)) best = v; return best; };
-      const clamp = v => snap(Math.max(minTo, Math.min(maxTo, v)));
-      const presets = [
-        ['Min', minTo],
-        ['½ banku', clamp(h.currentBet + (pot + toCall) / 2)],
-        ['Bank', clamp(h.currentBet + pot + toCall)],
-        ['All-in', maxTo],
-      ];
-      const key = `${h.no}|${h.stage}|${h.currentBet}|${minTo}|${maxTo}`;
-      if (!raiseVal || raiseVal.key !== key) raiseVal = { key, v: minTo };
-      raiseVal.vals = vals;
-      const v = raiseVal.v, vi = Math.max(0, vals.indexOf(v));
-      actions += `<div class="raise">
-        <div style="display:flex;justify-content:space-between;align-items:baseline"><span class="label">${h.currentBet === 0 ? 'Vsadit' : 'Zvýšit na'}</span><span class="amt" id="rAmt">${v}</span></div>
-        <div class="rstep"><button class="btn small" data-a="rstep" data-d="-1" aria-label="Méně o ${st}">−${st}</button>
-        <input type="range" id="rRange" min="0" max="${vals.length - 1}" step="1" value="${vi}" aria-label="Výše sázky">
-        <button class="btn small" data-a="rstep" data-d="1" aria-label="Více o ${st}">+${st}</button></div>
-        <div class="rrow">${presets.map(([l, x]) => `<button class="btn small" data-a="preset" data-v="${x}">${l}</button>`).join('')}</div>
-        <button class="btn primary" data-a="raise" ${dis}>${h.currentBet === 0 ? 'Vsadit' : 'Zvýšit na'} <span id="rAmt2">${v}${v === maxTo ? ' (all-in)' : ''}</span></button>
-      </div>`;
-    }
+  // Panel akcí má vždy stejné rozložení; mimo tah jsou tlačítka jen neaktivní.
+  if (!myTurn && armed === 'fold') armed = null;
+  if (myTurn && !lastTurnKey){ turnStartAt = Date.now(); setTimeout(render, ARM_MS + 30); }
+  const arming = myTurn && Date.now() - turnStartAt < ARM_MS;
+  const can = myTurn && connected && !arming;
+  const dis = can ? '' : 'disabled';
+  const toCall = myTurn ? h.currentBet - s.bet : 0;
+  const maxTo = myTurn ? s.bet + me.chips : 0;
+  const foldArmed = armed === 'fold' && myTurn;
+  let callBtn;
+  if (myTurn && toCall > 0) callBtn = `<button class="btn" data-a="call" ${dis}>${toCall >= me.chips ? 'All-in ' + me.chips : 'Dorovnat ' + toCall}</button>`;
+  else callBtn = `<button class="btn" data-a="check" ${dis}>Čekat</button>`;
+  let actions = `<div class="acts"><button class="btn danger ${foldArmed ? 'armed' : ''}" data-a="fold" ${dis}>${foldArmed ? 'Opravdu složit?' : 'Složit'}</button>${callBtn}</div>`;
+  const canRaise = myTurn && maxTo > h.currentBet;
+  let st = (h && h.sb) || S.config.sb || 1, vals = [0], v = null, vi = 0, presets = [['Min', 0], ['½ banku', 0], ['Bank', 0], ['All-in', 0]];
+  const isBet = !h || !live || h.currentBet === 0;
+  if (canRaise){
+    const minTo = Math.min(h.currentBet + h.minRaise, maxTo);
+    const pot = h.seats.reduce((a, x) => a + x.total, 0);
+    // povolené částky: minimum, pak násobky malého blindu, nakonec all-in
+    vals = [minTo];
+    for (let m = Math.ceil((minTo + 1) / st) * st; m < maxTo; m += st) vals.push(m);
+    if (maxTo > minTo) vals.push(maxTo);
+    const snap = x => { let best = vals[0]; for (const w of vals) if (Math.abs(w - x) < Math.abs(best - x)) best = w; return best; };
+    const clamp = x => snap(Math.max(minTo, Math.min(maxTo, x)));
+    presets = [['Min', minTo], ['½ banku', clamp(h.currentBet + (pot + toCall) / 2)], ['Bank', clamp(h.currentBet + pot + toCall)], ['All-in', maxTo]];
+    const key = `${h.no}|${h.stage}|${h.currentBet}|${minTo}|${maxTo}`;
+    if (!raiseVal || raiseVal.key !== key) raiseVal = { key, v: minTo };
+    raiseVal.vals = vals;
+    v = raiseVal.v; vi = Math.max(0, vals.indexOf(v));
   }
+  const rdis = canRaise && can ? '' : 'disabled';
+  const shown = v === null ? '–' : v;
+  actions += `<div class="raise ${canRaise ? '' : 'off'}">
+      <div style="display:flex;justify-content:space-between;align-items:baseline"><span class="label">${isBet ? 'Vsadit' : 'Zvýšit na'}</span><span class="amt" id="rAmt">${shown}</span></div>
+      <div class="rstep"><button class="btn small" data-a="rstep" data-d="-1" ${rdis} aria-label="Méně o ${st}">−${st}</button>
+      <input type="range" id="rRange" min="0" max="${vals.length - 1}" step="1" value="${vi}" ${rdis} aria-label="Výše sázky">
+      <button class="btn small" data-a="rstep" data-d="1" ${rdis} aria-label="Více o ${st}">+${st}</button></div>
+      <div class="rrow">${presets.map(([l, x]) => `<button class="btn small" data-a="preset" data-v="${x}" ${rdis}>${l}</button>`).join('')}</div>
+      <button class="btn primary" data-a="raise" ${rdis}>${isBet ? 'Vsadit' : 'Zvýšit na'} <span id="rAmt2">${shown}${canRaise && v === maxTo ? ' (all-in)' : ''}</span></button>
+    </div>`;
+  let waitTxt = '&nbsp;';
+  if (myTurn) waitTxt = arming ? 'Jsi na tahu…' : '';
+  else if (live && h.toAct >= 0){ const tp = P(S, h.seats[h.toAct].id); waitTxt = `Hraje ${esc(tp ? tp.name : '')}`; }
+  else if (!live) waitTxt = 'Čeká se na rozdání';
+  if (status === '' && waitTxt) status = `<span class="label">${waitTxt}</span>`;
   setHTML(el, `<div class="mehead">
       <div class="mecards" data-a="hide" role="button" aria-label="Zakrýt nebo ukázat karty">${cards}</div>
       <div class="meinfo">
-        <span class="label">${esc(me.name)} ${tagsMe.join(' ')}</span>
+        <span class="label">${esc(me.name)} ${tagsMe.join(' ')}${s && live && s.bet ? ` · sázka ${s.bet}` : ''}</span>
         <span class="pot">${me.chips}</span>
-        ${hn ? `<span class="hn">${esc(hn)}</span>` : ''}
-        ${s && live && s.bet ? `<span class="bet">tvoje sázka ${s.bet}</span>` : ''}
-        ${status}
+        <span class="hn">${hn ? esc(hn) : '&nbsp;'}</span>
+        <span class="mestatus">${status || '&nbsp;'}</span>
       </div>
     </div>${actions}`);
   const turnKey = myTurn ? `${h.no}|${h.stage}|${h.currentBet}` : '';
@@ -1276,24 +1288,36 @@ function renderRules(){
 }
 
 // ---------- události ----------
+// pojistka proti omylu: prvních ARM_MS po začátku tahu se akce nepřijímají
+function guardTurn(){
+  const h = S && S.hand;
+  const mine = h && inHand(S) && h.toAct >= 0 && h.seats[h.toAct].id === myId;
+  return mine && Date.now() - turnStartAt >= ARM_MS;
+}
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-tab],[data-a]');
   if (!t) return;
   if (t.dataset.tab){ tab = t.dataset.tab; armed = null; render(); return; }
   const a = t.dataset.a;
-  if (a !== 'remove' && a !== 'reset') armed = null;
+  if (a !== 'remove' && a !== 'reset' && a !== 'fold') armed = null;
   switch (a){
     case 'hide': hideCards = !hideCards; render(); break;
     case 'deal': send('deal'); break;
     case 'skip': send('skip'); break;
-    case 'fold': case 'check': case 'call': send('act', { type: a }); break;
+    case 'fold': {
+      if (!guardTurn()) break;
+      const h = S.hand, sm = seatOf(myId);
+      if (h && sm && h.currentBet - sm.bet === 0 && armed !== 'fold'){ armed = 'fold'; render(); break; }
+      armed = null; send('act', { type: 'fold' }); break;
+    }
+    case 'check': case 'call': if (guardTurn()) send('act', { type: a }); break;
     case 'preset': raiseVal.v = Number(t.dataset.v); syncRaise(); break;
     case 'rstep': {
       const vals = raiseVal.vals || [raiseVal.v];
       const i = Math.max(0, vals.indexOf(raiseVal.v)) + Number(t.dataset.d);
       raiseVal.v = vals[Math.max(0, Math.min(vals.length - 1, i))]; syncRaise(); break;
     }
-    case 'raise': send('act', { type: 'raise', amount: raiseVal.v }); break;
+    case 'raise': if (guardTurn() && raiseVal) send('act', { type: 'raise', amount: raiseVal.v }); break;
     case 'rebuy': send('rebuy'); break;
     case 'move': send('move', { id: t.dataset.id, dir: Number(t.dataset.dir) }); break;
     case 'away': { const me = P(S, myId); send('away', { away: !me.away }); break; }
