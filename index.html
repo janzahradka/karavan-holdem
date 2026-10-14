@@ -186,6 +186,41 @@ td.n{text-align:right}
 .card.own{box-shadow:0 0 0 2px var(--brass)}
 .sd-fold{font-size:13px;color:var(--muted)}
 .card.dim{opacity:.35}
+/* kompaktní rozložení pro hru bez scrollování */
+.wrap{gap:8px;padding-block:8px 12px}
+.top{align-items:center}
+.top h1{font-size:18px}
+.connmini{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-display);font-size:14px;letter-spacing:.12em;color:var(--muted)}
+.connmini i{width:8px;height:8px;border-radius:50%;background:#f0a597}
+.connmini.ok i{background:var(--good)}
+.tabs button{padding:6px 10px;font-size:14px}
+.opps{gap:6px}
+.opp{padding:6px 8px;gap:2px;border-radius:9px}
+.opp .ch{font-size:15px}
+.opp .bet{font-size:13px;padding:1px 6px;border-radius:999px;background:rgba(217,166,74,.15)}
+.opp .btn.small{min-height:30px;font-size:12px;padding:4px 8px}
+.felt{padding:10px 12px;gap:4px;border-width:4px;border-radius:90px/60px}
+.board{min-height:58px;gap:5px}
+.card{width:40px;height:58px;font-size:17px;border-radius:6px}
+.card small{font-size:16px}
+.card.lg{width:52px;height:74px;font-size:22px}
+.card.lg small{font-size:21px}
+.pot{font-size:17px}
+.feltmeta{font-family:var(--f-label);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:center}
+.lastact{font-size:12px;color:var(--ink);opacity:.8;text-align:center;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.me{padding-block:8px max(8px,env(safe-area-inset-bottom,0px));gap:6px}
+.mehead{min-height:76px;gap:10px}
+.meinfo .pot{font-size:20px}
+.meinfo .hn{font-size:15px}
+.acts{grid-template-columns:1fr 1fr 1.25fr;gap:6px}
+.acts .btn{min-height:44px;padding:8px 6px;font-size:14px;line-height:1.15}
+.raise{padding:8px;gap:6px}
+.raise .amt{font-size:18px}
+.rrow .btn.small{flex:1;min-height:32px;padding:4px 6px}
+.rstep .btn.small{min-height:34px;min-width:48px}
+.codebar .code{font-size:24px}
+.sd{padding:10px;gap:6px}
+.sd-row{padding:8px}
 input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-display);font-size:22px;max-width:9ch}
 </style>
 </head>
@@ -193,7 +228,7 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
 <div class="wrap">
   <header class="top">
     <h1>Karavan Hold'em</h1>
-    <span class="meta" id="meta"></span>
+    <span class="connmini" id="connMini" hidden></span>
   </header>
 
   <section id="lobby" class="lobby" hidden>
@@ -216,13 +251,6 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
   </section>
 
   <section id="game" class="stack" hidden>
-    <div class="codebar">
-      <div><span class="label">Kód stolu</span><div class="code" id="codeShow"></div></div>
-      <div class="stack" style="gap:4px;align-items:flex-end">
-        <span class="conn" id="connState"></span>
-        <div class="inline" style="gap:6px;justify-content:flex-end"><button class="btn small" id="soundBtn">Zvuk: jen dealer</button><button class="btn small" id="copyLink">Zkopírovat odkaz</button></div>
-      </div>
-    </div>
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="table" aria-selected="true">Stůl</button>
       <button role="tab" data-tab="players" aria-selected="false">Hráči</button>
@@ -234,11 +262,19 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
       <div id="opps" class="opps"></div>
       <div id="felt"></div>
       <div id="result"></div>
-      <div id="log" class="log" hidden></div>
     </section>
 
     <section id="v-players" class="stack" hidden>
+      <div class="codebar">
+      <div><span class="label">Kód stolu</span><div class="code" id="codeShow"></div></div>
+      <div class="stack" style="gap:4px;align-items:flex-end">
+        <span class="conn" id="connState"></span>
+        <div class="inline" style="gap:6px;justify-content:flex-end"><button class="btn small" id="soundBtn">Zvuk: jen dealer</button><button class="btn small" id="copyLink">Zkopírovat odkaz</button></div>
+      </div>
+    </div>
       <div id="score"></div>
+      <div class="label">Průběh hry</div>
+      <div id="log" class="log" hidden></div>
       <div id="seats"></div>
       <div id="settings"></div>
       <button class="btn danger" id="leaveBtn">Opustit stůl na tomhle telefonu</button>
@@ -859,6 +895,8 @@ function send(cmd, args){
 function setConn(ok, txt){
   connected = ok;
   const el = $('connState'); el.textContent = txt; el.className = 'conn ' + (ok ? 'ok' : 'bad');
+  const cm = $('connMini');
+  if (cm){ cm.hidden = !code; cm.className = 'connmini ' + (ok ? 'ok' : 'bad'); cm.innerHTML = `<i></i>${esc(code || '')}`; cm.title = txt; }
   render();
 }
 function showGame(){
@@ -886,13 +924,13 @@ function leaveTable(){
   showLobby();
 }
 function showLobby(){
+  $('connMini').hidden = true;
   $('game').hidden = true; $('lobby').hidden = false;
   $('nameIn').value = LS.get('name') || '';
   const last = LS.get('lastHost');
   const rb = $('resumeBtn');
   if (last && LS.get('host.' + last)) { rb.hidden = false; rb.textContent = `Pokračovat ve stole ${last} (uložené zůstatky)`; }
   else rb.hidden = true;
-  $('meta').textContent = '';
 }
 function newCode(){
   const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -1063,7 +1101,7 @@ function render(){
   $('v-rules').hidden = tab !== 'rules';
   renderRules();
   const h = S && S.hand;
-  $('meta').textContent = S ? metaText() : '';
+  
   const me = S ? P(S, myId) : null;
   const gate = $('gate');
   if (!S){ gate.hidden = false; setHTML(gate, 'Čekám na spojení se stolem. Hostitel musí mít stránku otevřenou.'); }
@@ -1104,8 +1142,7 @@ function renderOpps(){
     const stuck = turnId === p.id && !isOnline(p.id);
     return `<div class="opp ${turnId === p.id ? 'turn' : ''} ${out ? 'out' : ''}">
       <div class="row"><span class="nm">${esc(p.name)}</span><span class="ch">${p.chips}</span></div>
-      <div class="row"><span class="tags">${tags.join('')}</span><span class="mini">${cards}</span></div>
-      ${s && live && s.bet ? `<div class="bet">sázka ${s.bet}</div>` : ''}
+      <div class="row"><span class="tags">${tags.join('')}${s && live && s.bet ? `<span class="bet">${s.bet}</span>` : ''}</span><span class="mini">${cards}</span></div>
       ${s && s.hand && h.stage === 'done' && h.showdown && !s.folded ? `<div class="label">${esc(s.hand)}</div>` : ''}
       ${stuck ? `<button class="btn small" data-a="skip">Je offline: čekat/složit za něj</button>` : ''}
     </div>`;
@@ -1126,7 +1163,8 @@ function renderFelt(){
   const pot = h ? h.seats.reduce((a, s) => a + s.total, 0) : 0;
   let stage = h ? STAGE_CZ[h.stage] : 'Zatím se nehrálo';
   if (h && inHand(S) && h.toAct >= 0){ const n = P(S, h.seats[h.toAct].id); stage += ` · hraje ${n ? n.name : ''}`; }
-  setHTML(el, `<div class="felt"><div class="stage">${esc(stage)}</div><div class="board">${board}</div><div class="pot">Bank ${pot}</div></div>`);
+  const last = S.log && S.log.length ? S.log[S.log.length - 1].txt : '';
+  setHTML(el, `<div class="felt"><div class="stage">${esc(stage)}</div><div class="board">${board}</div><div class="potrow"><span class="pot">Bank ${pot}</span></div><div class="feltmeta">${esc(metaText())}</div>${last ? `<div class="lastact">${esc(last)}</div>` : ''}</div>`);
 }
 
 function renderResult(){
@@ -1221,7 +1259,7 @@ function renderMe(){
   let callBtn;
   if (myTurn && toCall > 0) callBtn = `<button class="btn" data-a="call" ${dis}>${toCall >= me.chips ? 'All-in ' + me.chips : 'Dorovnat ' + toCall}</button>`;
   else callBtn = `<button class="btn" data-a="check" ${dis}>Čekat</button>`;
-  let actions = `<div class="acts"><button class="btn danger ${foldArmed ? 'armed' : ''}" data-a="fold" ${dis}>${foldArmed ? 'Opravdu složit?' : 'Složit'}</button>${callBtn}</div>`;
+  let actions = `<div class="acts"><button class="btn danger ${foldArmed ? 'armed' : ''}" data-a="fold" ${dis}>${foldArmed ? 'Opravdu?' : 'Složit'}</button>${callBtn}%RAISEBTN%</div>`;
   const canRaise = myTurn && maxTo > h.currentBet;
   let st = (h && h.sb) || S.config.sb || 1, vals = [0], v = null, vi = 0, presets = [['Min', 0], ['½ banku', 0], ['Bank', 0], ['All-in', 0]];
   const isBet = !h || !live || h.currentBet === 0;
@@ -1248,8 +1286,8 @@ function renderMe(){
       <input type="range" id="rRange" min="0" max="${vals.length - 1}" step="1" value="${vi}" ${rdis} aria-label="Výše sázky">
       <button class="btn small" data-a="rstep" data-d="1" ${rdis} aria-label="Více o ${st}">+${st}</button></div>
       <div class="rrow">${presets.map(([l, x]) => `<button class="btn small" data-a="preset" data-v="${x}" ${rdis}>${l}</button>`).join('')}</div>
-      <button class="btn primary" data-a="raise" ${rdis}>${isBet ? 'Vsadit' : 'Zvýšit na'} <span id="rAmt2">${shown}${canRaise && v === maxTo ? ' (all-in)' : ''}</span></button>
     </div>`;
+  actions = actions.replace('%RAISEBTN%', `<button class="btn primary" data-a="raise" ${rdis}>${isBet ? 'Vsadit' : 'Zvýšit'} <span id="rAmt2">${shown}${canRaise && v === maxTo ? ' (all-in)' : ''}</span></button>`);
   let waitTxt = '&nbsp;';
   if (myTurn) waitTxt = arming ? 'Jsi na tahu…' : '';
   else if (live && h.toAct >= 0){ const tp = P(S, h.seats[h.toAct].id); waitTxt = `Hraje ${esc(tp ? tp.name : '')}`; }
