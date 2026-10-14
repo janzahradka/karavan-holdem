@@ -171,6 +171,21 @@ td.n{text-align:right}
 .meinfo .yourturn{font-size:16px}
 .raise.off{opacity:.45}
 .btn.armed{background:var(--red);color:#fff;border-color:transparent}
+.sd{display:flex;flex-direction:column;gap:8px;border:1px solid rgba(217,166,74,.5);border-radius:14px;padding:12px;background:rgba(217,166,74,.07)}
+.sd-row{display:flex;flex-direction:column;gap:4px;padding:10px;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.18)}
+.sd-row.w{border-color:var(--brass);background:rgba(217,166,74,.14);box-shadow:0 0 18px -8px var(--brass)}
+.sd-top{display:flex;align-items:center;gap:8px}
+.sd-rank{font-family:var(--f-display);width:1.4em;text-align:center;color:var(--muted)}
+.sd-row.w .sd-rank{color:var(--brass)}
+.sd-nm{flex:1;min-width:0;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sd-net{font-family:var(--f-display);font-size:18px}
+.sd-hand{font-family:var(--f-label);font-weight:700;font-size:17px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink)}
+.sd-row.w .sd-hand{color:var(--brass)}
+.sd-cards{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sd-arrow{color:var(--muted)}
+.card.own{box-shadow:0 0 0 2px var(--brass)}
+.sd-fold{font-size:13px;color:var(--muted)}
+.card.dim{opacity:.35}
 input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-display);font-size:22px;max-width:9ch}
 </style>
 </head>
@@ -309,6 +324,17 @@ function cmpScore(a, b){
     const d = (a[i]||0) - (b[i]||0); if (d) return d;
   }
   return 0;
+}
+// nejlepší pětice karet (pro zobrazení vyhodnocení)
+function bestFive(cards){
+  const c = cards.map(x => [rv(x[0]), x[1]]);
+  const n = c.length; if (n < 5) return cards.slice();
+  let best = null, pick = null;
+  for (let a=0;a<n;a++) for (let b=a+1;b<n;b++) for (let d=b+1;d<n;d++) for (let e=d+1;e<n;e++) for (let f=e+1;f<n;f++){
+    const s = score5([c[a],c[b],c[d],c[e],c[f]]);
+    if (!best || cmpScore(s, best) > 0){ best = s; pick = [a,b,d,e,f]; }
+  }
+  return pick.map(i => cards[i]).sort((x, y) => rv(y[0]) - rv(x[0]));
 }
 function bestScore(cards){
   const c = cards.map(x => [rv(x[0]), x[1]]);
@@ -533,7 +559,7 @@ function showdown(S){
   const n = h.seats.length;
   const order = i => (i - h.di - 1 + n) % n;
   const live = h.seats.map((s, i) => ({ s, i })).filter(x => !x.s.folded);
-  live.forEach(x => { x.score = bestScore([...x.s.cards, ...h.board]); x.s.hand = handName(x.score); });
+  live.forEach(x => { const all = [...x.s.cards, ...h.board]; x.score = bestScore(all); x.s.hand = handName(x.score); x.s.score = x.score; x.s.best = bestFive(all); });
   const levels = [...new Set(h.seats.map(s => s.total).filter(t => t > 0))].sort((a, b) => a - b);
   const pots = [];
   let prev = 0;
@@ -1091,7 +1117,12 @@ function renderFelt(){
   const el = $('felt');
   if (!S || !S.players.length){ setHTML(el, ''); return; }
   const h = S.hand;
-  const board = [0,1,2,3,4].map(i => cardHTML(h && h.board[i])).join('');
+  let winSet = null;
+  if (h && h.stage === 'done' && h.showdown && h.results && h.results[0]){
+    const w = h.seats.find(x => x.id === h.results[0].winners[0]);
+    if (w && w.best) winSet = new Set(w.best);
+  }
+  const board = [0,1,2,3,4].map(i => { const c = h && h.board[i]; return cardHTML(c, winSet && c ? (winSet.has(c) ? 'win' : 'dim') : ''); }).join('');
   const pot = h ? h.seats.reduce((a, s) => a + s.total, 0) : 0;
   let stage = h ? STAGE_CZ[h.stage] : 'Zatím se nehrálo';
   if (h && inHand(S) && h.toAct >= 0){ const n = P(S, h.seats[h.toAct].id); stage += ` · hraje ${n ? n.name : ''}`; }
@@ -1105,15 +1136,43 @@ function renderResult(){
   const ready = S.players.filter(p => p.chips > 0 && !p.away).length;
   let html = '';
   if (h && h.stage === 'done' && h.results){
-    html += `<div class="result">` + h.results.map(r => {
-      const names = r.winners.map(id => esc((P(S, id) || {name:'?'}).name)).join(' a ');
-      return `<p><b>${names}</b> ${r.winners.length > 1 ? 'dělí' : 'bere'} ${r.amount}${r.label ? ' — ' + esc(r.label) : ''}</p>`;
-    }).join('') + `</div>`;
+    // výhra každého hráče z banků
+    const won = {};
+    h.results.forEach(r => { const sh = Math.floor(r.amount / r.winners.length); r.winners.forEach(id => won[id] = (won[id] || 0) + sh); });
+    const winners = new Set(h.results.filter(r => r.label !== 'vrácená sázka').flatMap(r => r.winners));
+    if (h.showdown){
+      const rows = h.seats.filter(x => !x.folded && x.score).sort((a, b) => cmpScore(b.score, a.score));
+      const folded = h.seats.filter(x => x.folded);
+      html += `<div class="sd"><div class="sd-head"><span class="label">Vyhodnocení hry č. ${h.no}</span></div>` +
+        rows.map((x, i) => {
+          const p = P(S, x.id) || { name: '?' };
+          const net = (won[x.id] || 0) - x.total;
+          const isW = winners.has(x.id);
+          const hole = new Set(x.cards);
+          return `<div class="sd-row ${isW ? 'w' : ''}">
+            <div class="sd-top"><span class="sd-rank">${isW ? '★' : i + 1}</span>
+              <span class="sd-nm">${esc(p.name)}${x.id === myId ? ' <span class="tag">ty</span>' : ''}</span>
+              <span class="sd-net ${net > 0 ? 'pos' : net < 0 ? 'neg' : ''}">${net > 0 ? '+' : ''}${net}</span></div>
+            <div class="sd-hand">${esc(x.hand || '')}</div>
+            <div class="sd-cards"><span class="mini">${x.cards.map(c => cardHTML(c, 'sm')).join('')}</span><span class="sd-arrow">→</span>
+              <span class="mini">${(x.best || []).map(c => cardHTML(c, 'sm' + (hole.has(c) ? ' own' : ''))).join('')}</span></div>
+          </div>`;
+        }).join('') +
+        (folded.length ? `<div class="sd-fold">Složili: ${folded.map(x => esc((P(S, x.id) || {name:'?'}).name) + ` (−${x.total})`).join(', ')}</div>` : '') +
+        `</div>`;
+    } else {
+      html += `<div class="result">` + h.results.map(r => {
+        const names = r.winners.map(id => esc((P(S, id) || {name:'?'}).name)).join(' a ');
+        return `<p><b>${names}</b> ${r.winners.length > 1 ? 'dělí' : 'bere'} ${r.amount}${r.label ? ' — ' + esc(r.label) : ''}</p>`;
+      }).join('') + `</div>`;
+    }
   }
   if (!inHand(S) && S.players.length){
     const nd = ready >= 2 ? nextDealer(S) : null;
-    if (nd && nd.id === myId) html += `<button class="btn primary" data-a="deal" ${connected ? '' : 'disabled'}>${h ? 'Rozdat další hru' : 'Rozdat první hru'}</button>`;
-    else if (nd && !isOnline(nd.id)) html += `<div class="notice">Rozdávat má <b>${esc(nd.name)}</b>, ale není připojený.</div><button class="btn" data-a="deal" ${connected ? '' : 'disabled'}>Rozdat za ${esc(nd.name)}</button>`;
+    const dArm = armed === 'deal';
+    const dLabel = dArm ? 'Opravdu rozdat? Ťukni znovu' : null;
+    if (nd && nd.id === myId) html += `<button class="btn primary ${dArm ? 'armed' : ''}" data-a="deal" ${connected ? '' : 'disabled'}>${dLabel || (h ? 'Rozdat další hru' : 'Rozdat první hru')}</button>`;
+    else if (nd && !isOnline(nd.id)) html += `<div class="notice">Rozdávat má <b>${esc(nd.name)}</b>, ale není připojený.</div><button class="btn ${dArm ? 'armed' : ''}" data-a="deal" ${connected ? '' : 'disabled'}>${dLabel || 'Rozdat za ' + esc(nd.name)}</button>`;
     else if (nd) html += `<div class="notice">Další hru rozdává <b>${esc(nd.name)}</b>.</div>`;
     if (!nd) html += `<div class="notice">Ke hře jsou potřeba aspoň dva hráči se žetony. Ostatní se připojí kódem <b>${esc(code)}</b>. Kdo nemá žetony, dokoupí v záložce Hráči.</div>`;
   }
@@ -1299,10 +1358,12 @@ document.addEventListener('click', e => {
   if (!t) return;
   if (t.dataset.tab){ tab = t.dataset.tab; armed = null; render(); return; }
   const a = t.dataset.a;
-  if (a !== 'remove' && a !== 'reset' && a !== 'fold') armed = null;
+  if (a !== 'remove' && a !== 'reset' && a !== 'fold' && a !== 'deal') armed = null;
   switch (a){
     case 'hide': hideCards = !hideCards; render(); break;
-    case 'deal': send('deal'); break;
+    case 'deal':
+      if (armed !== 'deal'){ armed = 'deal'; clearTimeout(window._dealT); window._dealT = setTimeout(() => { if (armed === 'deal'){ armed = null; render(); } }, 5000); render(); break; }
+      armed = null; send('deal'); break;
     case 'skip': send('skip'); break;
     case 'fold': {
       if (!guardTurn()) break;
