@@ -191,7 +191,7 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
       <div><span class="label">Kód stolu</span><div class="code" id="codeShow"></div></div>
       <div class="stack" style="gap:4px;align-items:flex-end">
         <span class="conn" id="connState"></span>
-        <div class="inline" style="gap:6px;justify-content:flex-end"><button class="btn small" id="soundBtn">Zvuk: zap</button><button class="btn small" id="copyLink">Zkopírovat odkaz</button></div>
+        <div class="inline" style="gap:6px;justify-content:flex-end"><button class="btn small" id="soundBtn">Zvuk: jen dealer</button><button class="btn small" id="copyLink">Zkopírovat odkaz</button></div>
       </div>
     </div>
     <nav class="tabs" role="tablist">
@@ -856,18 +856,28 @@ function needName(){
 // ================= OZNÁMENÍ AKCÍ (overlay + zvuk) =================
 const FX = {
   queue: [], busy: false, lastSeq: null,
-  sound: LS.get('sound') !== false,
+  mode: ['dealer', 'on', 'off'].includes(LS.get('soundMode')) ? LS.get('soundMode') : 'dealer',
   ctx: null,
 };
+// zvuk hraje: 'on' vždy, 'off' nikdy, 'dealer' jen na telefonu aktuálního rozdávajícího
+function soundActive(){
+  if (FX.mode === 'on') return true;
+  if (FX.mode === 'off' || !S) return false;
+  const d = S.dealerId || (nextDealer(S) || {}).id;
+  return d === myId;
+}
 function fxAudio(){
-  if (!FX.sound) return null;
+  if (!soundActive()) return null;
   try {
     if (!FX.ctx) FX.ctx = new (window.AudioContext || window.webkitAudioContext)();
     if (FX.ctx.state === 'suspended') FX.ctx.resume();
     return FX.ctx;
   } catch (e) { return null; }
 }
-document.addEventListener('pointerdown', () => { if (FX.sound) fxAudio(); }, { capture: true });
+document.addEventListener('pointerdown', () => {
+  if (FX.mode === 'off') return;
+  try { if (!FX.ctx) FX.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (FX.ctx.state === 'suspended') FX.ctx.resume(); } catch(e){}
+}, { capture: true });
 
 function tone(ctx, t0, freq, dur, type = 'sine', vol = 0.18, freqEnd){
   const o = ctx.createOscillator(), g = ctx.createGain();
@@ -969,10 +979,13 @@ function nextFx(){
   clearTimeout(FX.t);
   FX.t = setTimeout(nextFx, dur);
 }
+const SOUND_LABEL = { dealer: 'Zvuk: jen dealer', on: 'Zvuk: vždy', off: 'Zvuk: vyp' };
 function toggleSound(){
-  FX.sound = !FX.sound; LS.set('sound', FX.sound);
-  $('soundBtn').textContent = FX.sound ? 'Zvuk: zap' : 'Zvuk: vyp';
-  if (FX.sound) playSound('check');
+  FX.mode = { dealer: 'on', on: 'off', off: 'dealer' }[FX.mode];
+  LS.set('soundMode', FX.mode);
+  $('soundBtn').textContent = SOUND_LABEL[FX.mode];
+  toast({ dealer: 'Zvuk hraje jen na telefonu toho, kdo rozdává.', on: 'Zvuk hraje na tomhle telefonu vždy.', off: 'Zvuk je vypnutý.' }[FX.mode]);
+  if (soundActive()) playSound('check');
 }
 
 // ---------- render ----------
@@ -1279,7 +1292,7 @@ $('leaveBtn').addEventListener('click', () => {
   leaveTable();
 });
 $('soundBtn').addEventListener('click', toggleSound);
-$('soundBtn').textContent = FX.sound ? 'Zvuk: zap' : 'Zvuk: vyp';
+$('soundBtn').textContent = SOUND_LABEL[FX.mode];
 $('copyLink').addEventListener('click', async () => {
   const url = location.href.split('#')[0] + '#' + code;
   try { await navigator.clipboard.writeText(url); toast('Odkaz zkopírován.'); }
