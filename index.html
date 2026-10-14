@@ -162,6 +162,9 @@ td.n{text-align:right}
 .seats .seatno{font-family:var(--f-display);color:var(--brass);width:1.6em;text-align:center}
 .seats .seatnm{flex:1;min-width:0;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .seats .btn.small{min-width:44px;font-size:18px}
+.rstep{display:flex;align-items:center;gap:8px}
+.rstep input[type=range]{flex:1;min-width:0}
+.rstep .btn.small{min-width:52px}
 input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-display);font-size:22px;max-width:9ch}
 </style>
 </head>
@@ -1153,7 +1156,13 @@ function renderMe(){
     if (maxTo > h.currentBet){
       const minTo = Math.min(h.currentBet + h.minRaise, maxTo);
       const pot = h.seats.reduce((a, x) => a + x.total, 0);
-      const clamp = v => Math.max(minTo, Math.min(maxTo, Math.round(v)));
+      // povolené částky: minimum, pak násobky malého blindu, nakonec all-in
+      const st = h.sb || S.config.sb || 1;
+      const vals = [minTo];
+      for (let m = Math.ceil((minTo + 1) / st) * st; m < maxTo; m += st) vals.push(m);
+      if (maxTo > minTo) vals.push(maxTo);
+      const snap = x => { let best = vals[0]; for (const v of vals) if (Math.abs(v - x) < Math.abs(best - x)) best = v; return best; };
+      const clamp = v => snap(Math.max(minTo, Math.min(maxTo, v)));
       const presets = [
         ['Min', minTo],
         ['½ banku', clamp(h.currentBet + (pot + toCall) / 2)],
@@ -1162,10 +1171,13 @@ function renderMe(){
       ];
       const key = `${h.no}|${h.stage}|${h.currentBet}|${minTo}|${maxTo}`;
       if (!raiseVal || raiseVal.key !== key) raiseVal = { key, v: minTo };
-      const v = raiseVal.v;
+      raiseVal.vals = vals;
+      const v = raiseVal.v, vi = Math.max(0, vals.indexOf(v));
       actions += `<div class="raise">
         <div style="display:flex;justify-content:space-between;align-items:baseline"><span class="label">${h.currentBet === 0 ? 'Vsadit' : 'Zvýšit na'}</span><span class="amt" id="rAmt">${v}</span></div>
-        <input type="range" id="rRange" min="${minTo}" max="${maxTo}" step="1" value="${v}" aria-label="Výše sázky">
+        <div class="rstep"><button class="btn small" data-a="rstep" data-d="-1" aria-label="Méně o ${st}">−${st}</button>
+        <input type="range" id="rRange" min="0" max="${vals.length - 1}" step="1" value="${vi}" aria-label="Výše sázky">
+        <button class="btn small" data-a="rstep" data-d="1" aria-label="Více o ${st}">+${st}</button></div>
         <div class="rrow">${presets.map(([l, x]) => `<button class="btn small" data-a="preset" data-v="${x}">${l}</button>`).join('')}</div>
         <button class="btn primary" data-a="raise" ${dis}>${h.currentBet === 0 ? 'Vsadit' : 'Zvýšit na'} <span id="rAmt2">${v}${v === maxTo ? ' (all-in)' : ''}</span></button>
       </div>`;
@@ -1276,6 +1288,11 @@ document.addEventListener('click', e => {
     case 'skip': send('skip'); break;
     case 'fold': case 'check': case 'call': send('act', { type: a }); break;
     case 'preset': raiseVal.v = Number(t.dataset.v); syncRaise(); break;
+    case 'rstep': {
+      const vals = raiseVal.vals || [raiseVal.v];
+      const i = Math.max(0, vals.indexOf(raiseVal.v)) + Number(t.dataset.d);
+      raiseVal.v = vals[Math.max(0, Math.min(vals.length - 1, i))]; syncRaise(); break;
+    }
     case 'raise': send('act', { type: 'raise', amount: raiseVal.v }); break;
     case 'rebuy': send('rebuy'); break;
     case 'move': send('move', { id: t.dataset.id, dir: Number(t.dataset.dir) }); break;
@@ -1292,12 +1309,13 @@ document.addEventListener('click', e => {
 });
 function syncRaise(){
   const r = $('rRange'); if (!r) return;
-  r.value = raiseVal.v;
+  const vals = raiseVal.vals || [raiseVal.v];
+  r.value = Math.max(0, vals.indexOf(raiseVal.v));
   $('rAmt').textContent = raiseVal.v;
-  $('rAmt2').textContent = raiseVal.v + (String(raiseVal.v) === r.max ? ' (all-in)' : '');
+  $('rAmt2').textContent = raiseVal.v + (raiseVal.v === vals[vals.length - 1] && vals.length > 1 ? ' (all-in)' : '');
 }
 document.addEventListener('input', e => {
-  if (e.target.id === 'rRange'){ raiseVal.v = Number(e.target.value); syncRaise(); }
+  if (e.target.id === 'rRange'){ const vals = raiseVal.vals || [raiseVal.v]; raiseVal.v = vals[Number(e.target.value)] ?? raiseVal.v; syncRaise(); }
   if (e.target.id === 'codeIn'){ e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, ''); }
 });
 document.addEventListener('submit', e => {
