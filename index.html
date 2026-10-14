@@ -105,7 +105,7 @@ th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line)}
 th{font-family:var(--f-label);font-weight:600;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 td.n{text-align:right}
 .pos{color:var(--good)} .neg{color:#f0a597}
-.form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .form label{display:flex;flex-direction:column;gap:4px}
 .stack{display:flex;flex-direction:column;gap:10px}
 .inline{display:flex;gap:8px;flex-wrap:wrap}
@@ -189,6 +189,7 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
       <ul class="ranks" id="ranks"></ul>
       <div class="label">Jak se hraje</div>
       <p>Každý dostane dvě vlastní karty. Na stole se postupně otočí pět společných: nejdřív tři (flop), pak čtvrtá (turn) a pátá (river). Z vašich dvou a pěti společných si aplikace sama vybere nejlepší pětici.</p>
+      <p>Rozdává se po směru stolu a tlačítko pro rozdání další hry vidí jen ten, kdo je na řadě. Blindy se zdvojují po nastaveném počtu her (výchozí je 5).</p>
       <p>Před rozdáním dávají dva hráči vlevo od rozdávajícího povinné sázky, malý a velký blind (štítky SB a BB). Pak se sází po kolech: před flopem, po flopu, po turnu a po riveru.</p>
       <p><b>Čekat</b> můžeš, když nikdo nevsadil. <b>Dorovnat</b> znamená dát tolik, kolik vsadil ten nejvyšší. <b>Vsadit / Zvýšit</b> navýší sázku a ostatní musí reagovat. <b>Složit</b> znamená vzdát tuhle hru. <b>All-in</b> dáš všechno, co máš.</p>
       <p>Kdo zůstane poslední, nebo má na konci nejlepší kombinaci, bere bank. Když jde někdo all-in s menším počtem žetonů, aplikace sama spočítá vedlejší banky.</p>
@@ -303,7 +304,7 @@ function handName(s){
 
 // ---- stav hry ----
 function emptyState(){
-  return { v: 0, config: { sb: 10, bb: 20, start: 1000 }, players: [], hand: null, handNo: 0, log: [] };
+  return { v: 0, config: { sb: 10, bb: 20, start: 1000, levelHands: 5 }, players: [], hand: null, handNo: 0, levelFrom: 0, log: [] };
 }
 function P(S, id){ return S.players.find(p => p.id === id); }
 function addLog(S, txt){
@@ -338,24 +339,41 @@ function post(S, seat, amount){
   return a;
 }
 
-function startHand(S){
+// příští dealer: další hráč se žetony po tom minulém
+function nextDealer(S){
+  const n = S.players.length;
+  const prev = S.players.findIndex(p => p.id === S.dealerId);
+  for (let k = 1; k <= n; k++){
+    const p = S.players[(prev + k + n) % n];
+    if (p.chips > 0 && !p.away) return p;
+  }
+  return null;
+}
+// blindy pro hru č. handNo: zdvojení každých levelHands her od levelFrom
+function levelHands(S){ const l = S.config.levelHands; return l === undefined ? 5 : l; }
+function blindsFor(S, handNo){
+  const lh = levelHands(S);
+  const from = S.levelFrom == null ? (S.handNo || 0) : S.levelFrom;
+  const lvl = lh > 0 ? Math.max(0, Math.floor((handNo - 1 - from) / lh)) : 0;
+  const m = Math.pow(2, Math.min(lvl, 20));
+  return { sb: S.config.sb * m, bb: S.config.bb * m, level: lvl, untilNext: lh > 0 ? lh - ((handNo - 1 - from) % lh) : 0 };
+}
+function startHand(S, byId, force){
   if (inHand(S)) fail('Hra ještě běží.');
   const elig = S.players.filter(p => p.chips > 0 && !p.away);
   if (elig.length < 2) fail('Ke hře jsou potřeba aspoň dva hráči se žetony.');
-  // posun dealera
-  const prev = S.players.findIndex(p => p.id === S.dealerId);
-  let dealer = null;
-  for (let k = 1; k <= S.players.length; k++){
-    const p = S.players[(prev + k + S.players.length) % S.players.length];
-    if (p.chips > 0 && !p.away){ dealer = p; break; }
-  }
+  const dealer = nextDealer(S);
+  if (byId && byId !== dealer.id && !force) fail(`Rozdává ${dealer.name}.`);
+  if (S.levelFrom == null) S.levelFrom = S.handNo || 0;
   S.dealerId = dealer.id;
   S.handNo = (S.handNo || 0) + 1;
+  const bl = blindsFor(S, S.handNo);
+  const prevLevel = S.handNo > 1 ? blindsFor(S, S.handNo - 1).level : bl.level;
   const deck = newDeck();
   const h = {
     no: S.handNo, deck, board: [], stage: 'preflop',
     seats: elig.map(p => ({ id: p.id, cards: [], bet: 0, total: 0, folded: false, allIn: false, acted: false })),
-    currentBet: 0, minRaise: S.config.bb, toAct: -1, results: null, showdown: false,
+    currentBet: 0, minRaise: bl.bb, sb: bl.sb, bb: bl.bb, toAct: -1, results: null, showdown: false,
   };
   h.di = h.seats.findIndex(s => s.id === dealer.id);
   for (let r = 0; r < 2; r++) for (let k = 1; k <= h.seats.length; k++){
@@ -365,12 +383,13 @@ function startHand(S){
   const sbI = n === 2 ? h.di : (h.di + 1) % n;
   const bbI = (sbI + 1) % n;
   h.sbId = h.seats[sbI].id; h.bbId = h.seats[bbI].id;
-  post(S, h.seats[sbI], S.config.sb);
-  post(S, h.seats[bbI], S.config.bb);
-  h.currentBet = Math.max(h.seats[sbI].bet, h.seats[bbI].bet, S.config.bb);
+  post(S, h.seats[sbI], bl.sb);
+  post(S, h.seats[bbI], bl.bb);
+  h.currentBet = Math.max(h.seats[sbI].bet, h.seats[bbI].bet, bl.bb);
   h.toAct = bbI;
   S.hand = h;
-  addLog(S, `Hra č. ${h.no}: rozdává ${dealer.name}, blindy ${S.config.sb}/${S.config.bb}.`);
+  if (bl.level > prevLevel) addLog(S, `Blindy se zdvojují na ${bl.sb}/${bl.bb}.`);
+  addLog(S, `Hra č. ${h.no}: rozdává ${dealer.name}, blindy ${bl.sb}/${bl.bb}.`);
   progress(S);
 }
 
@@ -428,7 +447,7 @@ function progress(S){
       return;
     }
     h.seats.forEach(s => { s.bet = 0; s.acted = false; });
-    h.currentBet = 0; h.minRaise = S.config.bb;
+    h.currentBet = 0; h.minRaise = h.bb || S.config.bb;
     if (h.stage === 'preflop'){ h.board.push(...h.deck.splice(0, 3)); h.stage = 'flop'; }
     else if (h.stage === 'flop'){ h.board.push(h.deck.shift()); h.stage = 'turn'; }
     else if (h.stage === 'turn'){ h.board.push(h.deck.shift()); h.stage = 'river'; }
@@ -508,18 +527,21 @@ function setAway(S, id, away){
 function setConfig(S, cfg){
   if (inHand(S)) fail('Nastavení změníš až po skončení hry.');
   const sb = Math.floor(cfg.sb), bb = Math.floor(cfg.bb), start = Math.floor(cfg.start);
+  const lh = Math.floor(cfg.levelHands);
   if (!(sb >= 1 && bb >= sb && start >= bb * 2)) fail('Zkontroluj čísla: malý blind ≤ velký blind, vklad aspoň 2× velký blind.');
-  S.config = { sb, bb, start };
-  addLog(S, `Nastavení: blindy ${sb}/${bb}, vklad ${start}.`);
+  if (!(lh >= 0 && lh <= 100)) fail('Počet her do zdvojení musí být 0 až 100 (0 = nezdvojovat).');
+  S.config = { sb, bb, start, levelHands: lh };
+  S.levelFrom = S.handNo || 0;
+  addLog(S, `Nastavení: blindy ${sb}/${bb}, vklad ${start}, ${lh ? 'zdvojení každých ' + lh + ' her' : 'bez zdvojování'}.`);
 }
 function resetBalances(S){
   if (inHand(S)) fail('Nejdřív dohrajte rozehranou hru.');
   S.players.forEach(p => { p.chips = S.config.start; p.buyins = S.config.start; });
-  S.hand = null; S.handNo = 0; S.dealerId = null;
+  S.hand = null; S.handNo = 0; S.dealerId = null; S.levelFrom = 0;
   addLog(S, `Nová partie, všichni mají ${S.config.start} žetonů.`);
 }
 
-if (typeof module !== 'undefined') module.exports = { emptyState, joinTable, startHand, act, rebuy, bestScore, handName, cmpScore, P, inHand };
+if (typeof module !== 'undefined') module.exports = { emptyState, joinTable, startHand, nextDealer, blindsFor, setConfig, resetBalances, act, rebuy, bestScore, handName, cmpScore, P, inHand };
 </script>
 <script>
 const $ = id => document.getElementById(id);
@@ -639,7 +661,7 @@ function applyCmd(pid, cmd, args){
   try {
     switch (cmd){
       case 'join': joinTable(HS, pid, args.name); break;
-      case 'deal': startHand(HS); break;
+      case 'deal': { const nd = nextDealer(HS); startHand(HS, pid, !!(nd && !onlineIds().includes(nd.id))); break; }
       case 'act': act(HS, pid, args.type, args.amount); break;
       case 'rebuy': rebuy(HS, pid); break;
       case 'away': setAway(HS, pid, args.away); break;
@@ -786,6 +808,17 @@ function needName(){
 }
 
 // ---------- render ----------
+const hry = n => n + ' ' + (n === 1 ? 'hra' : n < 5 ? 'hry' : 'her');
+function metaText(){
+  const h = S.hand, lh = levelHands(S);
+  if (inHand(S)){
+    const left = lh > 0 ? blindsFor(S, h.no).untilNext - 1 : 0;
+    const nx = lh > 0 ? `, pak ${h.sb * 2}/${h.bb * 2}` : '';
+    return `Hra č. ${h.no} · blindy ${h.sb}/${h.bb}${lh > 0 ? (left > 0 ? ` (ještě ${hry(left)}${nx})` : ` (poslední${nx})`) : ''}`;
+  }
+  const b = blindsFor(S, (S.handNo || 0) + 1);
+  return `Blindy ${b.sb}/${b.bb}${lh > 0 ? ` (ještě ${hry(b.untilNext)}, pak ${b.sb * 2}/${b.bb * 2})` : ''}`;
+}
 function seatOf(id){ return S && S.hand ? S.hand.seats.find(s => s.id === id) : null; }
 function isOnline(id){ return online.includes(id); }
 
@@ -797,7 +830,7 @@ function render(){
   $('v-rules').hidden = tab !== 'rules';
   renderRules();
   const h = S && S.hand;
-  $('meta').textContent = S ? `Blindy ${S.config.sb}/${S.config.bb}${h ? ' · hra č. ' + h.no : ''}` : '';
+  $('meta').textContent = S ? metaText() : '';
   const me = S ? P(S, myId) : null;
   const gate = $('gate');
   if (!S){ gate.hidden = false; setHTML(gate, 'Čekám na spojení se stolem. Hostitel musí mít stránku otevřenou.'); }
@@ -869,8 +902,11 @@ function renderResult(){
     }).join('') + `</div>`;
   }
   if (!inHand(S) && S.players.length){
-    if (ready >= 2) html += `<button class="btn primary" data-a="deal" ${connected ? '' : 'disabled'}>${h ? 'Rozdat další hru' : 'Rozdat první hru'}</button>`;
-    else html += `<div class="notice">Ke hře jsou potřeba aspoň dva hráči se žetony. Ostatní se připojí kódem <b>${esc(code)}</b>. Kdo nemá žetony, dokoupí v záložce Hráči.</div>`;
+    const nd = ready >= 2 ? nextDealer(S) : null;
+    if (nd && nd.id === myId) html += `<button class="btn primary" data-a="deal" ${connected ? '' : 'disabled'}>${h ? 'Rozdat další hru' : 'Rozdat první hru'}</button>`;
+    else if (nd && !isOnline(nd.id)) html += `<div class="notice">Rozdávat má <b>${esc(nd.name)}</b>, ale není připojený.</div><button class="btn" data-a="deal" ${connected ? '' : 'disabled'}>Rozdat za ${esc(nd.name)}</button>`;
+    else if (nd) html += `<div class="notice">Další hru rozdává <b>${esc(nd.name)}</b>.</div>`;
+    if (!nd) html += `<div class="notice">Ke hře jsou potřeba aspoň dva hráči se žetony. Ostatní se připojí kódem <b>${esc(code)}</b>. Kdo nemá žetony, dokoupí v záložce Hráči.</div>`;
   }
   setHTML(el, html);
 }
@@ -985,6 +1021,8 @@ function renderSettings(){
       <label><span class="label">Malý blind</span><input id="cSb" type="number" inputmode="numeric" min="1" value="${S.config.sb}"></label>
       <label><span class="label">Velký blind</span><input id="cBb" type="number" inputmode="numeric" min="1" value="${S.config.bb}"></label>
       <label><span class="label">Vklad</span><input id="cSt" type="number" inputmode="numeric" min="2" value="${S.config.start}"></label>
+      <label><span class="label">Zdvojit blindy po hrách</span><input id="cLv" type="number" inputmode="numeric" min="0" max="100" value="${S.config.levelHands === undefined ? 5 : S.config.levelHands}"></label>
+      <div class="label" style="grid-column:1/-1">Blindy se zdvojí vždy po zadaném počtu her (0 = nikdy). Uložením nastavení začne počítání znovu od zadaných blindů.</div>
       <button class="btn" ${dis} style="grid-column:1/-1">Uložit nastavení</button>
     </form>
     <button class="btn danger" data-a="reset" ${dis}>${armed === 'reset' ? 'Opravdu? Všem se nastaví ' + S.config.start + ' žetonů' : 'Nová partie (vynulovat zůstatky)'}</button>
@@ -1050,7 +1088,7 @@ document.addEventListener('submit', e => {
   e.preventDefault();
   const id = e.target.id;
   if (id === 'joinForm'){ const n = $('joinName').value.trim(); if (n) LS.set('name', n); send('join', { name: n }); }
-  if (id === 'cfgForm') send('config', { sb: Number($('cSb').value), bb: Number($('cBb').value), start: Number($('cSt').value) });
+  if (id === 'cfgForm') send('config', { sb: Number($('cSb').value), bb: Number($('cBb').value), start: Number($('cSt').value), levelHands: Number($('cLv').value) });
   if (id === 'joinCodeForm'){
     if (!needName()) return;
     const c = $('codeIn').value.trim().toUpperCase();
