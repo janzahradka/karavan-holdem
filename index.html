@@ -221,6 +221,15 @@ td.n{text-align:right}
 .codebar .code{font-size:24px}
 .sd{padding:10px;gap:6px}
 .sd-row{padding:8px}
+#result{display:flex;flex-direction:column;gap:12px}
+#result:empty{display:none}
+.dealbtn{display:flex;align-items:center;gap:14px;width:100%;margin-top:4px;padding:12px 16px;border-radius:14px;background:linear-gradient(180deg,#e2b358,var(--brass));color:var(--brass-ink);text-align:left;box-shadow:0 3px 0 #9c7426,0 8px 22px -10px var(--brass)}
+.dealbtn:active{transform:translateY(2px);box-shadow:0 1px 0 #9c7426}
+.dealbtn:disabled{opacity:.5}
+.dealchip{width:42px;height:42px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:22px;color:var(--brass);background:radial-gradient(circle,#0e1c18 55%,transparent 56%),repeating-conic-gradient(#f6f1e4 0 22.5deg,#0e1c18 22.5deg 45deg);font-variant-emoji:text}
+.dealtxt{display:flex;flex-direction:column;gap:1px;min-width:0}
+.dealtxt b{font-family:var(--f-display);font-weight:400;font-size:19px;letter-spacing:.02em}
+.dealtxt small{font-family:var(--f-label);font-weight:600;font-size:13px;letter-spacing:.08em;text-transform:uppercase;opacity:.75}
 input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-display);font-size:22px;max-width:9ch}
 </style>
 </head>
@@ -1207,10 +1216,13 @@ function renderResult(){
   }
   if (!inHand(S) && S.players.length){
     const nd = ready >= 2 ? nextDealer(S) : null;
-    const dArm = armed === 'deal';
-    const dLabel = dArm ? 'Opravdu rozdat? Ťukni znovu' : null;
-    if (nd && nd.id === myId) html += `<button class="btn primary ${dArm ? 'armed' : ''}" data-a="deal" ${connected ? '' : 'disabled'}>${dLabel || (h ? 'Rozdat další hru' : 'Rozdat první hru')}</button>`;
-    else if (nd && !isOnline(nd.id)) html += `<div class="notice">Rozdávat má <b>${esc(nd.name)}</b>, ale není připojený.</div><button class="btn ${dArm ? 'armed' : ''}" data-a="deal" ${connected ? '' : 'disabled'}>${dLabel || 'Rozdat za ' + esc(nd.name)}</button>`;
+    const nb = nd ? blindsFor(S, (S.handNo || 0) + 1) : null;
+    const dealBtn = (title) => `<button class="dealbtn" data-a="deal" ${connected ? '' : 'disabled'}>
+        <span class="dealchip" aria-hidden="true">♠&#xFE0E;</span>
+        <span class="dealtxt"><b>${title}</b><small>Hra č. ${(S.handNo || 0) + 1} · blindy ${nb.sb}/${nb.bb}</small></span>
+      </button>`;
+    if (nd && nd.id === myId) html += dealBtn(h ? 'Rozdat další hru' : 'Rozdat první hru');
+    else if (nd && !isOnline(nd.id)) html += `<div class="notice">Rozdávat má <b>${esc(nd.name)}</b>, ale není připojený.</div>` + dealBtn('Rozdat za ' + esc(nd.name));
     else if (nd) html += `<div class="notice">Další hru rozdává <b>${esc(nd.name)}</b>.</div>`;
     if (!nd) html += `<div class="notice">Ke hře jsou potřeba aspoň dva hráči se žetony. Ostatní se připojí kódem <b>${esc(code)}</b>. Kdo nemá žetony, dokoupí v záložce Hráči.</div>`;
   }
@@ -1396,12 +1408,10 @@ document.addEventListener('click', e => {
   if (!t) return;
   if (t.dataset.tab){ tab = t.dataset.tab; armed = null; render(); return; }
   const a = t.dataset.a;
-  if (a !== 'remove' && a !== 'reset' && a !== 'fold' && a !== 'deal') armed = null;
+  if (a !== 'remove' && a !== 'reset' && a !== 'fold') armed = null;
   switch (a){
     case 'hide': hideCards = !hideCards; render(); break;
-    case 'deal':
-      if (armed !== 'deal'){ armed = 'deal'; clearTimeout(window._dealT); window._dealT = setTimeout(() => { if (armed === 'deal'){ armed = null; render(); } }, 5000); render(); break; }
-      armed = null; send('deal'); break;
+    case 'deal': send('deal'); break;
     case 'skip': send('skip'); break;
     case 'fold': {
       if (!guardTurn()) break;
