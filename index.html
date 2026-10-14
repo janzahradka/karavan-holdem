@@ -157,6 +157,11 @@ td.n{text-align:right}
 @keyframes fxKnock{0%,100%{transform:translateY(0)}40%{transform:translateY(8px) scale(.95)}}
 @keyframes fxGlow{to{box-shadow:0 0 0 3px var(--k) inset,0 0 60px 6px var(--k)}}
 @keyframes fxPulse{50%{box-shadow:0 0 0 6px rgba(0,0,0,.25),0 0 70px 4px var(--k)}}
+.seats{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.seats li{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:6px 8px}
+.seats .seatno{font-family:var(--f-display);color:var(--brass);width:1.6em;text-align:center}
+.seats .seatnm{flex:1;min-width:0;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seats .btn.small{min-width:44px;font-size:18px}
 input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-display);font-size:22px;max-width:9ch}
 </style>
 </head>
@@ -210,6 +215,7 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
 
     <section id="v-players" class="stack" hidden>
       <div id="score"></div>
+      <div id="seats"></div>
       <div id="settings"></div>
       <button class="btn danger" id="leaveBtn">Opustit stůl na tomhle telefonu</button>
     </section>
@@ -559,6 +565,14 @@ function rebuy(S, id){
   p.chips += S.config.start; p.buyins += S.config.start;
   addLog(S, `${p.name} dokoupil ${S.config.start} žetonů.`);
 }
+function movePlayer(S, id, dir){
+  if (inHand(S)) fail('Pořadí jde měnit jen mezi hrami.');
+  const i = S.players.findIndex(p => p.id === id);
+  if (i < 0) fail('Hráč nenalezen.');
+  const j = (i + (dir < 0 ? -1 : 1) + S.players.length) % S.players.length;
+  [S.players[i], S.players[j]] = [S.players[j], S.players[i]];
+  addLog(S, `Nové pořadí u stolu: ${S.players.map(p => p.name).join(', ')}.`);
+}
 function removePlayer(S, id){
   if (inHand(S) && S.hand.seats.some(s => s.id === id)) fail('Hráč je ve rozehrané hře.');
   const p = P(S, id); if (!p) return;
@@ -712,6 +726,7 @@ function applyCmd(pid, cmd, args){
       case 'rebuy': rebuy(HS, pid); break;
       case 'away': setAway(HS, pid, args.away); break;
       case 'remove': removePlayer(HS, args.id); break;
+      case 'move': movePlayer(HS, args.id, args.dir); break;
       case 'config': setConfig(HS, args); break;
       case 'reset': resetBalances(HS); break;
       case 'skip': {
@@ -1021,7 +1036,7 @@ function render(){
     setHTML(gate, `<div class="stack"><div><b>Přisedni ke stolu.</b> Dostaneš ${S.config.start} žetonů.</div>
       <form class="inline" id="joinForm"><input id="joinName" maxlength="18" placeholder="Tvoje jméno" value="${esc(LS.get('name') || '')}"><button class="btn primary">Přisednout</button></form></div>`);
   } else gate.hidden = true;
-  renderOpps(); renderFelt(); renderResult(); renderLog(); renderMe(); renderScore(); renderSettings();
+  renderOpps(); renderFelt(); renderResult(); renderLog(); renderMe(); renderScore(); renderSeats(); renderSettings();
 }
 
 function renderOpps(){
@@ -1029,7 +1044,9 @@ function renderOpps(){
   if (!S || !S.players.length){ setHTML(el, ''); return; }
   const h = S.hand; const live = inHand(S);
   const turnId = live && h.toAct >= 0 ? h.seats[h.toAct].id : null;
-  const html = S.players.filter(p => p.id !== myId).map(p => {
+  const mi = S.players.findIndex(p => p.id === myId);
+  const order = mi < 0 ? S.players : [...S.players.slice(mi + 1), ...S.players.slice(0, mi)];
+  const html = order.map(p => {
     const s = seatOf(p.id);
     const tags = [];
     if (h && p.id === S.dealerId) tags.push('<span class="tag d">D</span>');
@@ -1193,6 +1210,22 @@ function renderScore(){
     <div style="overflow-x:auto"><table><thead><tr><th>Hráč</th><th class="n">Žetony</th><th class="n">Vloženo</th><th class="n">Výsledek</th></tr></thead><tbody>${rows}</tbody></table></div>`);
 }
 
+function renderSeats(){
+  const el = $('seats');
+  if (!S || S.players.length < 2){ setHTML(el, ''); return; }
+  const dis = inHand(S) ? 'disabled' : '';
+  const n = S.players.length;
+  setHTML(el, `<div class="stack">
+    <div class="label">Pořadí u stolu (po směru hodinových ručiček)</div>
+    <ol class="seats">${S.players.map((p, i) => `<li>
+      <span class="seatno">${i + 1}</span>
+      <span class="seatnm">${esc(p.name)}${p.id === myId ? ' <span class="tag">ty</span>' : ''}${p.id === S.dealerId ? ' <span class="tag d">D</span>' : ''}</span>
+      <button class="btn small" data-a="move" data-id="${esc(p.id)}" data-dir="-1" ${dis} aria-label="Posunout ${esc(p.name)} výš">↑</button>
+      <button class="btn small" data-a="move" data-id="${esc(p.id)}" data-dir="1" ${dis} aria-label="Posunout ${esc(p.name)} níž">↓</button>
+    </li>`).join('')}</ol>
+    <div class="label">${inHand(S) ? 'Pořadí jde měnit jen mezi hrami.' : `Seřaď hráče tak, jak sedíte. Po ${esc(S.players[n - 1].name)} následuje znovu ${esc(S.players[0].name)}. Dealer i blindy se posouvají v tomhle pořadí.`}</div>
+  </div>`);
+}
 function renderSettings(){
   const el = $('settings');
   if (!S){ setHTML(el, ''); return; }
@@ -1245,6 +1278,7 @@ document.addEventListener('click', e => {
     case 'preset': raiseVal.v = Number(t.dataset.v); syncRaise(); break;
     case 'raise': send('act', { type: 'raise', amount: raiseVal.v }); break;
     case 'rebuy': send('rebuy'); break;
+    case 'move': send('move', { id: t.dataset.id, dir: Number(t.dataset.dir) }); break;
     case 'away': { const me = P(S, myId); send('away', { away: !me.away }); break; }
     case 'remove': {
       const k = 'rm:' + t.dataset.id;
