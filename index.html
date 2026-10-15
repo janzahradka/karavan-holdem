@@ -265,6 +265,8 @@ td.n{text-align:right}
 .tmeta{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
 .tbtns{display:flex;gap:6px}
 .tbtns .btn.small{min-height:36px}
+.pair-addr{margin-top:8px;font-size:12px;color:var(--muted);text-align:center;word-break:break-all}
+.nettest{display:flex;flex-direction:column;gap:8px;width:100%;font-size:14px;word-break:break-all}
 input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-display);font-size:22px;max-width:9ch}
 </style>
 </head>
@@ -307,6 +309,7 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
       <div><b>Hrát bez internetu</b><br><span class="label">Třeba v letadle. Jeden telefon zapne Wi-Fi hotspot, ostatní se k němu připojí a spárují se QR kódem.</span></div>
       <button class="btn" id="offJoinBtn">Připojit se offline</button>
       <button class="btn" id="offHostBtn">Založit offline stůl</button>
+      <button class="btn small" data-a="pnet">Test sítě</button>
     </div>
   </section>
 
@@ -908,6 +911,38 @@ function waitIce(pc){
   });
 }
 
+// --- diagnostika sítě ---
+function candList(str){ const c = String(str).split('|')[7] || ''; return c ? c.split(';').map(x => x.slice(0, x.lastIndexOf(','))) : []; }
+function addrTxt(list){
+  if (!list.length) return '<b class="neg">žádná</b>';
+  return list.map(a => esc(a.endsWith('.local') ? 'skrytá (mDNS)' : a)).join(', ');
+}
+async function netProbe(){
+  const pc = new RTCPeerConnection(RTC_CFG);
+  pc.createDataChannel('probe');
+  await pc.setLocalDescription(await pc.createOffer());
+  await waitIce(pc);
+  const list = candList(sdpPack(pc.localDescription, 'o', ''));
+  pc.close();
+  return list;
+}
+async function showNetTest(){
+  pairShow({ title: 'Test sítě', body: '<div class="pair-wait">♠</div>', hint: 'Zjišťuji adresy telefonu…', buttons: [['Zavřít', 'pclose']] });
+  let cam = false;
+  try { await camStart(); cam = true; } catch(e){}
+  let list = [];
+  try { list = await netProbe(); } catch(e){}
+  camStop();
+  const lan = list.filter(a => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a));
+  let verdict;
+  if (!list.length) verdict = 'Telefon nemá žádnou použitelnou síťovou adresu. Pokud tenhle telefon sám vysílá hotspot, prohlížeč na něm hotspot nevidí a hrát přes něj nepůjde – hotspot musí vysílat jiné zařízení.';
+  else if (!lan.length && list.every(a => a.endsWith('.local'))) verdict = 'Adresa je skrytá. Povol kameru a zkus to znovu.';
+  else if (!lan.length) verdict = 'Telefon nemá adresu v místní Wi-Fi síti. Připoj se k hotspotu.';
+  else verdict = 'V pořádku, telefon je v místní síti a může hrát offline.';
+  pairShow({ title: 'Test sítě', body: `<div class="nettest"><div><span class="label">Adresy telefonu</span><div>${addrTxt(list)}</div></div><div><span class="label">Kamera</span><div>${cam ? 'povolená' : 'nepovolená'}</div></div></div>`,
+    hint: verdict, buttons: [['Zavřít', 'pclose'], ['Znovu', 'pnet', 'primary']] });
+}
+
 // --- QR kód a kamera ---
 function qrImg(text){
   const q = qrcode(0, 'M'); q.addData(text); q.make();
@@ -1024,7 +1059,7 @@ async function hostPair(){
 function hostShowOffer(){
   if (!pairCtx) return;
   if (Scan.stop){ Scan.stop(); Scan.stop = null; }
-  pairShow({ title: 'Krok 1 ze 2: hráč skenuje', body: qrImg(pairCtx.offer),
+  pairShow({ title: 'Krok 1 ze 2: hráč skenuje', body: qrImg(pairCtx.offer) + `<div class="pair-addr">Moje adresy: ${addrTxt(candList(pairCtx.offer))}</div>`,
     hint: 'Hráč v aplikaci ťukne na <b>Připojit se offline</b> (nebo <b>Spárovat se stolem</b>) a naskenuje tento kód. Potom ťukni na Další.',
     buttons: [['Zrušit', 'pclose'], ['Další: naskenovat hráče', 'pscan', 'primary']] });
 }
@@ -1041,13 +1076,15 @@ async function hostGotAnswer(txt){
   try { u = sdpUnpack(txt); } catch(e){ toast(e.message); return hostScanAnswer(); }
   if (u.kind !== 'a'){ toast('To je kód stolu. Naskenuj kód z telefonu hráče.'); return hostScanAnswer(); }
   camStop();
+  pairCtx.answer = txt;
   try { await pairCtx.peer.pc.setRemoteDescription(u.desc); }
   catch(e){ pairShow({ title: 'Kód nesedí', body: '', hint: 'Tahle odpověď patří k jinému kódu. Začni párování znovu.', buttons: [['Zavřít', 'pclose']] }); return; }
   pairShow({ title: 'Připojuji…', body: '<div class="pair-wait">♠</div>', hint: 'Oba telefony musí být na stejné Wi-Fi (hotspotu).', buttons: [['Zrušit', 'pclose']] });
   const ctx = pairCtx;
   ctx.timer = setTimeout(() => {
     if (pairCtx === ctx && ctx.peer.dc.readyState !== 'open')
-      pairShow({ title: 'Spojení se nepodařilo', body: '', hint: 'Zkontroluj, že jsou oba telefony připojené ke stejnému hotspotu, a spáruj znovu.', buttons: [['Zavřít', 'pclose'], ['Znovu', 'phost', 'primary']] });
+      pairShow({ title: 'Spojení se nepodařilo', body: `<div class="nettest"><div><span class="label">Adresy hostitele</span><div>${addrTxt(candList(ctx.offer))}</div></div><div><span class="label">Adresy hráče</span><div>${addrTxt(candList(ctx.answer))}</div></div><div><span class="label">Stav</span><div>${esc(ctx.peer.pc.iceConnectionState)}</div></div></div>`,
+        hint: 'Telefony se nenašly v síti. Pokud jeden z nich sám vysílá hotspot, prohlížeč na něm hotspot nejspíš nevidí. Zkuste <b>Test sítě</b> na obou telefonech.', buttons: [['Zavřít', 'pclose'], ['Test sítě', 'pnet'], ['Znovu', 'phost', 'primary']] });
   }, 15000);
 }
 
@@ -1081,7 +1118,7 @@ async function clientGotOffer(txt){
   camStop();
   const str = sdpPack(pc.localDescription, 'a', '');
   if (role !== 'client' || code !== u.extra || !isOffline()) startClient(u.extra, true);
-  pairShow({ title: 'Ukaž kód hostiteli', body: qrImg(str),
+  pairShow({ title: 'Ukaž kód hostiteli', body: qrImg(str) + `<div class="pair-addr">Moje adresy: ${addrTxt(candList(str))}</div>`,
     hint: 'Hostitel ťukne na <b>Další: naskenovat hráče</b> a namíří kameru sem. Okno se samo zavře, až se spojíte.',
     buttons: [['Zrušit', 'pclose'], ['Skenovat znovu', 'pjoin']] });
 }
@@ -1750,7 +1787,7 @@ function renderMode(){
   if (isOffline()){
     setHTML(el, `<div class="modebox"><div><b>Offline režim</b> (hotspot + QR párování)</div>
       <div class="inline">${role === 'host' ? '<button class="btn small primary" data-a="phost">Spárovat hráče</button>' : '<button class="btn small primary" data-a="pjoin">Spárovat se stolem</button>'}
-      <button class="btn small" data-a="goon">Přepnout zpět online</button></div></div>`);
+      <button class="btn small" data-a="goon">Přepnout zpět online</button><button class="btn small" data-a="pnet">Test sítě</button></div></div>`);
   } else {
     setHTML(el, `<div class="modebox"><div><b>Online režim</b> (přes internet)</div>
       <div class="inline"><button class="btn small" data-a="gooff">${role === 'host' ? 'Hrát offline (bez internetu)' : 'Připojit se offline'}</button></div>
@@ -1829,6 +1866,7 @@ document.addEventListener('click', e => {
     case 'pscan': hostScanAnswer(); break;
     case 'pback': hostShowOffer(); break;
     case 'pclose': pairClose(); break;
+    case 'pnet': showNetTest(); break;
     case 'skip': send('skip'); break;
     case 'fold': {
       if (!guardTurn()) break;
