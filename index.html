@@ -253,6 +253,9 @@ td.n{text-align:right}
 .pair-wait{font-family:var(--f-display);font-size:40px;color:var(--brass);padding:24px}
 .pair-btns{display:flex;gap:8px;flex-wrap:wrap}
 .pair-btns .btn{flex:1}
+.offbar.warn{border-color:rgba(240,165,151,.5);background:rgba(208,80,62,.1)}
+.offbar.warn .offdot{background:#f0a597}
+.modebox{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:12px}
 input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-display);font-size:22px;max-width:9ch}
 </style>
 </head>
@@ -315,6 +318,7 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
         <div class="inline" style="gap:6px;justify-content:flex-end"><button class="btn small" id="soundBtn">Zvuk: jen dealer</button><button class="btn small" id="copyLink">Zkopírovat odkaz</button></div>
       </div>
     </div>
+      <div id="modebox"></div>
       <div id="score"></div>
       <div class="label">Průběh hry</div>
       <div id="log" class="log" hidden></div>
@@ -523,6 +527,7 @@ function startHand(S, byId, force){
   const dealer = nextDealer(S);
   if (byId && byId !== dealer.id && !force) fail(`Rozdává ${dealer.name}.`);
   if (S.levelFrom == null) S.levelFrom = S.handNo || 0;
+  const prevDealerId = S.dealerId || null;
   S.dealerId = dealer.id;
   S.handNo = (S.handNo || 0) + 1;
   const bl = blindsFor(S, S.handNo);
@@ -531,7 +536,7 @@ function startHand(S, byId, force){
   const h = {
     no: S.handNo, deck, board: [], stage: 'preflop',
     seats: elig.map(p => ({ id: p.id, cards: [], bet: 0, total: 0, folded: false, allIn: false, acted: false })),
-    currentBet: 0, minRaise: bl.bb, sb: bl.sb, bb: bl.bb, toAct: -1, results: null, showdown: false,
+    currentBet: 0, minRaise: bl.bb, sb: bl.sb, bb: bl.bb, toAct: -1, results: null, showdown: false, prevDealerId,
   };
   h.di = h.seats.findIndex(s => s.id === dealer.id);
   for (let r = 0; r < 2; r++) for (let k = 1; k <= h.seats.length; k++){
@@ -710,6 +715,18 @@ function setConfig(S, cfg){
   S.config = { sb, bb, start, levelHands: lh };
   S.levelFrom = S.handNo || 0;
   addLog(S, `Nastavení: blindy ${sb}/${bb}, vklad ${start}, ${lh ? 'zdvojení každých ' + lh + ' her' : 'bez zdvojování'}.`);
+}
+// zrušení rozehrané hry: všem se vrátí, co do ní vložili; stejný dealer rozdá znovu
+function abortHand(S){
+  if (!inHand(S)) fail('Žádná hra neběží.');
+  const h = S.hand;
+  h.seats.forEach(s => { const p = P(S, s.id); if (p) p.chips += s.total; s.bet = 0; s.total = 0; });
+  h.stage = 'done'; h.toAct = -1; h.showdown = false; h.aborted = true;
+  h.results = [];
+  S.dealerId = h.prevDealerId || null;
+  S.handNo = Math.max(0, (S.handNo || 1) - 1);
+  addLog(S, `Hra č. ${h.no} byla zrušena, sázky se vrátily.`);
+  ev(S, { k: 'abort', no: h.no });
 }
 function resetBalances(S){
   if (inHand(S)) fail('Nejdřív dohrajte rozehranou hru.');
@@ -956,6 +973,16 @@ function camErr(e){
     : 'Kameru se nepodařilo spustit.';
 }
 
+// --- přepínání režimu u rozehraného stolu ---
+function goOffline(){
+  if (role === 'host'){ if (HS) hostSave(); startHost(code, true, true); setTimeout(() => { if (S && S.players.length < 2) hostPair(); }, 300); }
+  else { clientPair(); }
+}
+function goOnline(){
+  if (role === 'host'){ if (HS) hostSave(); startHost(code, true, false); }
+  else if (code) startClient(code, false);
+}
+
 // --- hostitel: přidat hráče ---
 async function hostPair(){
   if (role !== 'host' || !isOffline()) return;
@@ -1094,6 +1121,7 @@ function applyCmd(pid, cmd, args){
       case 'move': movePlayer(HS, args.id, args.dir); break;
       case 'config': setConfig(HS, args); break;
       case 'reset': resetBalances(HS); break;
+      case 'abort': if (pid !== myId) fail('Hru může zrušit jen hostitel.'); abortHand(HS); break;
       case 'skip': {
         if (!inHand(HS)) fail('Žádná hra neběží.');
         const seat = HS.hand.seats[HS.hand.toAct];
@@ -1190,7 +1218,9 @@ function send(cmd, args){
   if (!Bus.connected() || !connected){ toast('Nejsi připojený ke stolu. Chvíli počkej.'); return; }
   Bus.pub(base() + '/up', { type: 'cmd', from: myId, cmd, args: args || {} });
 }
+let connLostAt = 0;
 function setConn(ok, txt){
+  if (!ok && (connected || !connLostAt)){ connLostAt = Date.now(); setTimeout(render, 4200); }
   connected = ok;
   const el = $('connState'); el.textContent = txt; el.className = 'conn ' + (ok ? 'ok' : 'bad');
   const cm = $('connMini');
@@ -1301,6 +1331,7 @@ function playSound(k){
     case 'street':noise(ctx, t, 0.08, 0.18, 2500); break;
     case 'deal':  for (let i = 0; i < 3; i++) noise(ctx, t + i * 0.08, 0.06, 0.15, 3000); break;
     case 'blinds':tone(ctx, t, 660, 0.18, 'square', 0.06); tone(ctx, t + 0.2, 990, 0.3, 'square', 0.06); break;
+    case 'abort': tone(ctx, t, 520, 0.25, 'triangle', 0.12, 260); break;
     case 'turn':  tone(ctx, t, 880, 0.15, 'sine', 0.15); tone(ctx, t + 0.16, 1320, 0.25, 'sine', 0.15); break;
   }
 }
@@ -1316,6 +1347,7 @@ const FXK = {
   street: { g: '♠', c: '#f1ead8', verb: '' },
   deal:   { g: '♣', c: '#f1ead8', verb: 'rozdává' },
   blinds: { g: '×2', c: '#d9a64a', verb: 'Blindy se zdvojují' },
+  abort:  { g: '↺', c: '#e8735f', verb: 'zrušena' },
 };
 const nm = id => { if (id === myId) return 'Ty'; const p = S && P(S, id); return p ? p.name : '?'; };
 
@@ -1352,6 +1384,7 @@ function nextFx(){
     case 'street': verb = STAGE_CZ[e.stage] || ''; dur = 1000; break;
     case 'deal': who = `Hra č. ${e.no}`; verb = me ? 'rozdáváš' : `rozdává ${nm(e.pid)}`; dur = 1300; break;
     case 'blinds': amt = `${e.sb}/${e.bb}`; dur = 2200; break;
+    case 'abort': who = `Hra č. ${e.no}`; verb = 'zrušena'; sub = 'sázky vráceny'; dur = 2000; break;
   }
   if (FX.queue.length > 2) dur = Math.round(dur * 0.6);
   el.style.setProperty('--k', k.c);
@@ -1419,10 +1452,13 @@ function render(){
   if (isOffline() && role === 'host'){
     const others = S ? S.players.filter(p => p.id !== myId) : [];
     const on = others.filter(p => isOnline(p.id)).length;
-    ob.hidden = false;
+    ob.hidden = false; ob.className = 'offbar';
     setHTML(ob, `<span class="offdot"></span><span class="offtxt">Offline · připojeno ${on} z ${others.length}</span><button class="btn small primary" data-a="phost">Spárovat hráče</button>`);
+  } else if (!isOffline() && !connected && (Date.now() - connLostAt > 4000)){
+    ob.hidden = false; ob.className = 'offbar warn';
+    setHTML(ob, `<span class="offdot"></span><span class="offtxt">Bez internetu</span><button class="btn small primary" data-a="gooff">${role === 'host' ? 'Hrát offline' : 'Připojit se offline'}</button>`);
   } else ob.hidden = true;
-  renderOpps(); renderFelt(); renderResult(); renderLog(); renderMe(); renderScore(); renderSeats(); renderSettings();
+  renderOpps(); renderFelt(); renderResult(); renderLog(); renderMe(); renderScore(); renderSeats(); renderSettings(); renderMode();
 }
 
 function renderOpps(){
@@ -1662,6 +1698,19 @@ function renderSeats(){
     <div class="label">${inHand(S) ? 'Pořadí jde měnit jen mezi hrami.' : `Seřaď hráče tak, jak sedíte. Po ${esc(S.players[n - 1].name)} následuje znovu ${esc(S.players[0].name)}. Dealer i blindy se posouvají v tomhle pořadí.`}</div>
   </div>`);
 }
+function renderMode(){
+  const el = $('modebox'); if (!el) return;
+  if (!role){ setHTML(el, ''); return; }
+  if (isOffline()){
+    setHTML(el, `<div class="modebox"><div><b>Offline režim</b> (hotspot + QR párování)</div>
+      <div class="inline">${role === 'host' ? '<button class="btn small primary" data-a="phost">Spárovat hráče</button>' : '<button class="btn small primary" data-a="pjoin">Spárovat se stolem</button>'}
+      <button class="btn small" data-a="goon">Přepnout zpět online</button></div></div>`);
+  } else {
+    setHTML(el, `<div class="modebox"><div><b>Online režim</b> (přes internet)</div>
+      <div class="inline"><button class="btn small" data-a="gooff">${role === 'host' ? 'Hrát offline (bez internetu)' : 'Připojit se offline'}</button></div>
+      <div class="label">${role === 'host' ? 'Stůl, hráči i zůstatky zůstanou, jen se přepne spojení.' : 'Hostitel musí nejdřív přepnout stůl do offline režimu.'}</div></div>`);
+  }
+}
 function renderSettings(){
   const el = $('settings');
   if (!S){ setHTML(el, ''); return; }
@@ -1676,8 +1725,9 @@ function renderSettings(){
       <div class="label" style="grid-column:1/-1">Blindy se zdvojí vždy po zadaném počtu her (0 = nikdy). Uložením nastavení začne počítání znovu od zadaných blindů.</div>
       <button class="btn" ${dis} style="grid-column:1/-1">Uložit nastavení</button>
     </form>
+    ${role === 'host' && inHand(S) ? `<button class="btn danger" data-a="abort">${armed === 'abort' ? 'Opravdu? Hra se zruší a všem se vrátí sázky' : 'Zrušit rozehranou hru (vrátit sázky)'}</button>` : ''}
     <button class="btn danger" data-a="reset" ${dis}>${armed === 'reset' ? 'Opravdu? Všem se nastaví ' + S.config.start + ' žetonů' : 'Nová partie (vynulovat zůstatky)'}</button>
-    ${inHand(S) ? '<div class="label">Nastavení jde měnit jen mezi hrami.</div>' : ''}
+    ${inHand(S) ? `<div class="label">Nastavení jde měnit jen mezi hrami.${role === 'host' ? ' Rozehranou hru můžeš jako hostitel zrušit tlačítkem výše.' : ''}</div>` : ''}
   </div>`);
 }
 
@@ -1711,10 +1761,15 @@ document.addEventListener('click', e => {
   if (!t) return;
   if (t.dataset.tab){ tab = t.dataset.tab; armed = null; render(); return; }
   const a = t.dataset.a;
-  if (a !== 'remove' && a !== 'reset' && a !== 'fold') armed = null;
+  if (a !== 'remove' && a !== 'reset' && a !== 'fold' && a !== 'abort') armed = null;
   switch (a){
     case 'hide': hideCards = !hideCards; render(); break;
     case 'deal': send('deal'); break;
+    case 'abort':
+      if (armed !== 'abort'){ armed = 'abort'; render(); break; }
+      armed = null; send('abort'); break;
+    case 'gooff': goOffline(); break;
+    case 'goon': goOnline(); break;
     case 'phost': hostPair(); break;
     case 'pjoin': clientPair(); break;
     case 'pscan': hostScanAnswer(); break;
