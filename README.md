@@ -10,7 +10,7 @@ Hra: https://janzahradka.github.io/karavan-holdem/
 
 ## Offline režim (bez internetu, např. v letadle)
 
-- Jeden telefon zapne Wi-Fi hotspot, ostatní se k němu připojí přes Wi-Fi.
+- Jedno zařízení zapne Wi-Fi hotspot a nehraje (na zařízení s vlastním hotspotem WebRTC v Androidu nefunguje v Chrome ani Firefoxu). Hráči se k hotspotu připojí přes Wi-Fi.
 - Hostitel zvolí *Založit offline stůl* (nebo *Pokračovat offline v uloženém stole*), hráči *Připojit se offline*.
 - Párování: hráč naskenuje QR kód hostitele, hostitel naskenuje QR kód hráče. Pak se hraje přes WebRTC v místní síti.
 - Aplikaci je potřeba aspoň jednou otevřít s internetem, aby se uložila do telefonu (service worker).
