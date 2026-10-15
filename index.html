@@ -135,21 +135,23 @@ td.n{text-align:right}
 .conn{font-family:var(--f-label);font-size:13px;letter-spacing:.08em;text-transform:uppercase}
 .conn.ok{color:var(--good)} .conn.bad{color:#f0a597}
 /* oznámení akce */
-.fx{position:fixed;inset:0;display:grid;place-items:center;pointer-events:none;z-index:6;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-.fx-back{position:absolute;inset:0;background:radial-gradient(circle at 50% 45%,rgba(0,0,0,.35),rgba(0,0,0,.7));animation:fxBack var(--d,1.9s) ease both}
-.fx-box{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:22px 30px 20px;border-radius:22px;background:rgba(12,26,22,.94);border:2px solid var(--k);box-shadow:0 0 0 6px rgba(0,0,0,.25),0 0 40px -6px var(--k);text-align:center;max-width:100%;min-width:220px;animation:fxBox 1.9s cubic-bezier(.2,.9,.3,1.2) both}
-.fx-chip{width:96px;height:96px;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle,#0e1c18 52%,transparent 53%),repeating-conic-gradient(var(--k) 0 22.5deg,#0e1c18 22.5deg 45deg);box-shadow:0 0 0 3px var(--k) inset,0 0 24px -4px var(--k);margin-bottom:6px}
-.fx-chip span{font-family:var(--f-display);font-size:40px;line-height:1;color:var(--k);font-variant-emoji:text}
-.fx-allin .fx-chip span,.fx-blinds .fx-chip span{font-size:30px}
-.fx-who{font-weight:700;font-size:22px;color:var(--ink);max-width:16ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fx-verb{font-family:var(--f-display);font-size:28px;line-height:1.05;color:var(--k);text-transform:uppercase;letter-spacing:.02em;text-wrap:balance}
-.fx-amt{font-family:var(--f-display);font-size:48px;line-height:1;color:var(--ink);font-variant-numeric:tabular-nums}
-.fx-sub{font-family:var(--f-label);font-size:15px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-.fx-street .fx-box,.fx-deal .fx-box{min-width:0;padding:16px 24px}
-.fx-street .fx-chip,.fx-deal .fx-chip{width:64px;height:64px}
-.fx-street .fx-chip span,.fx-deal .fx-chip span{font-size:28px}
+/* Oznámení akce leží v pásu se soupeři (nad společnými kartami), nic neztmavuje a nezakrývá karty na stole ani v ruce. */
+.fx{position:fixed;left:0;right:0;top:8px;height:110px;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:6;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.fx-fit{transform:scale(var(--s,1));transform-origin:center}
+.fx-box{position:relative;display:flex;flex-direction:row;align-items:center;gap:14px;padding:10px 20px 10px 12px;border-radius:18px;background:rgba(12,26,22,.96);border:2px solid var(--k);box-shadow:0 0 0 4px rgba(0,0,0,.3),0 0 30px -6px var(--k);text-align:left;animation:fxBox 1.9s cubic-bezier(.2,.9,.3,1.2) both}
+.fx-chip{width:60px;height:60px;flex:none;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle,#0e1c18 52%,transparent 53%),repeating-conic-gradient(var(--k) 0 22.5deg,#0e1c18 22.5deg 45deg);box-shadow:0 0 0 2px var(--k) inset,0 0 18px -4px var(--k)}
+.fx-chip span{font-family:var(--f-display);font-size:26px;line-height:1;color:var(--k);font-variant-emoji:text}
+.fx-allin .fx-chip span,.fx-blinds .fx-chip span{font-size:19px}
+.fx-txt{display:flex;flex-direction:column;gap:1px;min-width:0}
+.fx-who{font-weight:700;font-size:17px;line-height:1.15;color:var(--ink);max-width:14ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fx-line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.fx-verb{font-family:var(--f-display);font-size:22px;line-height:1.05;color:var(--k);text-transform:uppercase;letter-spacing:.02em}
+.fx-amt{font-family:var(--f-display);font-size:30px;line-height:1;color:var(--ink);font-variant-numeric:tabular-nums}
+.fx-sub{font-family:var(--f-label);font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.fx-street .fx-box,.fx-deal .fx-box{padding:8px 18px 8px 10px}
+.fx-street .fx-chip,.fx-deal .fx-chip{width:44px;height:44px}
+.fx-street .fx-chip span,.fx-deal .fx-chip span{font-size:20px}
 @keyframes fxBox{0%{opacity:0;transform:scale(.6)}12%{opacity:1;transform:scale(1.06)}20%{transform:scale(1)}82%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(.96)}}
-@keyframes fxBack{0%{opacity:0}12%{opacity:1}82%{opacity:1}100%{opacity:0}}
 @media (prefers-reduced-motion:no-preference){
   .fx-bet .fx-chip,.fx-raise .fx-chip,.fx-call .fx-chip{animation:fxSpin .7s ease-out .1s both}
   .fx-allin .fx-chip{animation:fxSpin .5s linear .1s 3 both}
@@ -272,6 +274,18 @@ td.n{text-align:right}
 .diag-sub{margin-top:4px;color:var(--ink)}
 /* Bowlby One SC má vadný glyf malého „š“ (jen háček); velké „Š“ je v pořádku */
 .yourturn,.dealtxt b,.pair-title,.pair-wait{text-transform:uppercase}
+/* hráč na tahu: hrací plocha opakovaně zazáří */
+#felt.myturn .felt{border-color:#6b4a1c}
+@media (prefers-reduced-motion:no-preference){
+  #felt.myturn .felt{animation:turnGlow 1.3s ease-in-out infinite}
+  .dealbtn.nudge{animation:dealNudge 2.6s ease-in-out infinite}
+}
+@media (prefers-reduced-motion:reduce){
+  #felt.myturn .felt{box-shadow:inset 0 2px 18px rgba(0,0,0,.45),0 0 0 3px var(--brass)}
+  .dealbtn.nudge{outline:3px solid var(--brass);outline-offset:3px}
+}
+@keyframes turnGlow{0%,100%{box-shadow:inset 0 2px 18px rgba(0,0,0,.45),0 0 0 0 rgba(217,166,74,0)}50%{box-shadow:inset 0 2px 18px rgba(0,0,0,.45),0 0 0 3px var(--brass),0 0 38px 8px rgba(217,166,74,.6)}}
+@keyframes dealNudge{0%,100%{box-shadow:0 3px 0 #9c7426,0 8px 22px -10px var(--brass)}50%{box-shadow:0 3px 0 #9c7426,0 0 0 4px rgba(217,166,74,.35),0 8px 30px -4px var(--brass)}}
 input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-display);font-size:22px;max-width:9ch}
 </style>
 </head>
@@ -1703,8 +1717,8 @@ function soundActive(){
   const d = S.dealerId || (nextDealer(S) || {}).id;
   return d === myId;
 }
-function fxAudio(){
-  if (!soundActive()) return null;
+function fxAudio(own){
+  if (own ? FX.mode === 'off' : !soundActive()) return null;
   try {
     if (!FX.ctx) FX.ctx = new (window.AudioContext || window.webkitAudioContext)();
     if (FX.ctx.state === 'suspended') FX.ctx.resume();
@@ -1734,8 +1748,8 @@ function noise(ctx, t0, dur, vol = 0.2, hp = 1500){
   src.buffer = buf; src.connect(f).connect(g).connect(ctx.destination); src.start(t0);
 }
 function clink(ctx, t0){ tone(ctx, t0, 2400 + Math.random() * 500, 0.09, 'triangle', 0.12); tone(ctx, t0 + 0.01, 3600 + Math.random() * 600, 0.06, 'sine', 0.06); }
-function playSound(k){
-  const ctx = fxAudio(); if (!ctx) return;
+function playSound(k, own){
+  const ctx = fxAudio(own); if (!ctx) return;
   const t = ctx.currentTime + 0.02;
   switch (k){
     case 'fold':  noise(ctx, t, 0.28, 0.25, 800); tone(ctx, t, 340, 0.35, 'sine', 0.12, 110); break;
@@ -1749,6 +1763,7 @@ function playSound(k){
     case 'deal':  for (let i = 0; i < 3; i++) noise(ctx, t + i * 0.08, 0.06, 0.15, 3000); break;
     case 'blinds':tone(ctx, t, 660, 0.18, 'square', 0.06); tone(ctx, t + 0.2, 990, 0.3, 'square', 0.06); break;
     case 'abort': tone(ctx, t, 520, 0.25, 'triangle', 0.12, 260); break;
+    case 'nudge': tone(ctx, t, 660, 0.4, 'sine', 0.08); break;
     case 'turn':  tone(ctx, t, 880, 0.15, 'sine', 0.15); tone(ctx, t + 0.16, 1320, 0.25, 'sine', 0.15); break;
   }
 }
@@ -1807,17 +1822,36 @@ function nextFx(){
   el.style.setProperty('--k', k.c);
   el.style.setProperty('--d', dur + 'ms');
   el.className = 'fx fx-' + e.k;
-  el.innerHTML = `<div class="fx-back"></div><div class="fx-box" style="animation-duration:${dur}ms">
+  el.innerHTML = `<div class="fx-fit"><div class="fx-box" style="animation-duration:${dur}ms">
       <div class="fx-chip"><span>${k.g}&#xFE0E;</span></div>
-      ${who ? `<div class="fx-who">${esc(who)}</div>` : ''}
-      ${verb ? `<div class="fx-verb">${esc(verb)}</div>` : ''}
-      ${amt !== '' ? `<div class="fx-amt">${esc(amt)}</div>` : ''}
-      ${sub ? `<div class="fx-sub">${esc(sub)}</div>` : ''}
-    </div>`;
+      <div class="fx-txt">
+        ${who ? `<div class="fx-who">${esc(who)}</div>` : ''}
+        <div class="fx-line">${verb ? `<span class="fx-verb">${esc(verb)}</span>` : ''}${amt !== '' ? `<span class="fx-amt">${esc(amt)}</span>` : ''}</div>
+        ${sub ? `<div class="fx-sub">${esc(sub)}</div>` : ''}
+      </div>
+    </div></div>`;
   el.hidden = false;
+  fxPlace(el);
   playSound(e.k);
   clearTimeout(FX.t);
   FX.t = setTimeout(nextFx, dur);
+}
+// oznámení se umístí do pásu od horního okraje soupeřů po horní okraj společných karet a zmenší se, aby se do něj vešlo
+function fxPlace(el){
+  const vh = window.innerHeight, vw = document.documentElement.clientWidth;
+  let top = 8, bottom = 118;
+  const opps = $('opps'), board = document.querySelector('#felt .board');
+  if (tab === 'table' && opps && board && opps.offsetHeight){
+    top = Math.max(8, opps.getBoundingClientRect().top);
+    bottom = board.getBoundingClientRect().top - 4;
+    if (bottom - top < 56) bottom = top + 56;   // stůl odscrollovaný: raději malý přesah než nic
+  }
+  bottom = Math.min(bottom, vh - 8);
+  el.style.top = top + 'px';
+  el.style.height = Math.max(40, bottom - top) + 'px';
+  const fit = el.querySelector('.fx-fit'), box = el.querySelector('.fx-box');
+  const s = Math.min(1, (bottom - top - 4) / box.offsetHeight, (vw - 32) / box.offsetWidth);
+  fit.style.setProperty('--s', Math.max(0.55, s).toFixed(3));
 }
 const SOUND_LABEL = { dealer: 'Zvuk: jen dealer', on: 'Zvuk: vždy', off: 'Zvuk: vyp' };
 function toggleSound(){
@@ -1974,9 +2008,10 @@ function renderResult(){
   if (!inHand(S) && S.players.length){
     const nd = ready >= 2 ? nextDealer(S) : null;
     const nb = nd ? blindsFor(S, (S.handNo || 0) + 1) : null;
-    const dealBtn = (title) => `<button class="dealbtn" data-a="deal" ${connected ? '' : 'disabled'}>
+    const nudge = !!(nd && nd.id === myId && dealNudge());
+    const dealBtn = (title) => `<button class="dealbtn ${nudge ? 'nudge' : ''}" data-a="deal" ${connected ? '' : 'disabled'}>
         <span class="dealchip" aria-hidden="true">♠&#xFE0E;</span>
-        <span class="dealtxt"><b>${title}</b><small>Hra č. ${(S.handNo || 0) + 1} · blindy ${nb.sb}/${nb.bb}</small></span>
+        <span class="dealtxt"><b>${title}</b><small>${nudge ? 'Rozdáváš ty · ' : ''}Hra č. ${(S.handNo || 0) + 1} · blindy ${nb.sb}/${nb.bb}</small></span>
       </button>`;
     if (nd && nd.id === myId) html += dealBtn(h ? 'Rozdat další hru' : 'Rozdat první hru');
     else if (nd && nd.bot) html += dealBtn('Rozdat za ' + esc(nd.name));
@@ -1989,6 +2024,28 @@ function renderResult(){
   setHTML(el, html);
 }
 
+// Jemná připomínka rozdávajícímu: až po chvíli (čas na prohlédnutí výsledků) jedno krátké zavibrování,
+// tichý tón a pomalu pulzující tlačítko. V sólo hře se nepřipomíná.
+const NUDGE_MS = 15000;
+let dealWait = { key: '', t: 0, done: false, timer: null };
+function dealNudge(){
+  if (isSolo()) return false;
+  const key = code + '|' + (S.handNo || 0);
+  if (dealWait.key !== key){ clearTimeout(dealWait.timer); dealWait = { key, t: Date.now(), done: false, timer: null }; }
+  const left = NUDGE_MS - (Date.now() - dealWait.t);
+  if (left > 0){
+    clearTimeout(dealWait.timer);
+    dealWait.timer = setTimeout(() => { if (!inHand(S)) { $('result')._h = null; render(); } }, left + 50);
+    return false;
+  }
+  if (!dealWait.done){
+    dealWait.done = true;
+    try { navigator.vibrate && navigator.vibrate(80); } catch(e){}
+    playSound('nudge', true);
+  }
+  return true;
+}
+
 function renderLog(){
   const el = $('log');
   if (!S || !S.log || !S.log.length){ el.hidden = true; return; }
@@ -1999,7 +2056,7 @@ function renderLog(){
 function renderMe(){
   const el = $('me');
   const me = S ? P(S, myId) : null;
-  if (!me || tab !== 'table'){ el.hidden = true; lastTurnKey = ''; return; }
+  if (!me || tab !== 'table'){ el.hidden = true; lastTurnKey = ''; $('felt').classList.remove('myturn'); return; }
   el.hidden = false;
   const h = S.hand; const s = seatOf(myId); const live = inHand(S);
   const myTurn = live && h.toAct >= 0 && h.seats[h.toAct].id === myId;
@@ -2075,7 +2132,8 @@ function renderMe(){
       </div>
     </div>${actions}`);
   const turnKey = myTurn ? `${h.no}|${h.stage}|${h.currentBet}` : '';
-  if (myTurn && !lastTurnKey){ try { navigator.vibrate && navigator.vibrate([120, 60, 120]); } catch(e){} setTimeout(() => playSound('turn'), FX.busy ? 900 : 0); }
+  if (myTurn && !lastTurnKey){ try { navigator.vibrate && navigator.vibrate([90, 70, 90, 70, 90]); } catch(e){} setTimeout(() => playSound('turn'), FX.busy ? 900 : 0); }
+  $('felt').classList.toggle('myturn', myTurn);
   lastTurnKey = turnKey;
 }
 
