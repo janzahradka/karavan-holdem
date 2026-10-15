@@ -503,7 +503,7 @@ function handName(s){
 
 // ---- stav hry ----
 function emptyState(){
-  return { v: 0, config: { sb: 10, bb: 20, start: 1000, levelHands: 5 }, players: [], hand: null, handNo: 0, levelFrom: 0, log: [] };
+  return { v: 0, config: { sb: 10, bb: 20, start: 1500, levelHands: 5 }, players: [], hand: null, handNo: 0, levelFrom: 0, log: [] };
 }
 function P(S, id){ return S.players.find(p => p.id === id); }
 function addLog(S, txt){
@@ -2026,7 +2026,7 @@ function renderResult(){
 
 // Jemná připomínka rozdávajícímu: až po chvíli (čas na prohlédnutí výsledků) jedno krátké zavibrování,
 // tichý tón a pomalu pulzující tlačítko. V sólo hře se nepřipomíná.
-const NUDGE_MS = 15000;
+const NUDGE_MS = 10000;
 let dealWait = { key: '', t: 0, done: false, timer: null };
 function dealNudge(){
   if (isSolo()) return false;
