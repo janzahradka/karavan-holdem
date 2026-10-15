@@ -256,6 +256,15 @@ td.n{text-align:right}
 .offbar.warn{border-color:rgba(240,165,151,.5);background:rgba(208,80,62,.1)}
 .offbar.warn .offdot{background:#f0a597}
 .modebox{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:12px}
+.topright{display:inline-flex;align-items:center;gap:10px}
+.tablesbtn{min-height:30px;padding:4px 10px;font-size:13px}
+.tlist{display:flex;flex-direction:column;gap:8px}
+.titem{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--line);border-radius:10px}
+.tinfo{flex:1;min-width:150px;display:flex;flex-direction:column;gap:1px}
+.tcode{font-family:var(--f-display);font-size:18px;letter-spacing:.12em;color:var(--brass)}
+.tmeta{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.tbtns{display:flex;gap:6px}
+.tbtns .btn.small{min-height:36px}
 input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-display);font-size:22px;max-width:9ch}
 </style>
 </head>
@@ -263,7 +272,7 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
 <div class="wrap">
   <header class="top">
     <h1>Karavan Hold'em</h1>
-    <span class="connmini" id="connMini" hidden></span>
+    <span class="topright"><span class="connmini" id="connMini" hidden></span><button class="btn small tablesbtn" id="tablesBtn" hidden>Stoly</button></span>
   </header>
 
   <section id="lobby" class="lobby" hidden>
@@ -275,6 +284,14 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
       <label class="stack" for="nameIn"><span class="label">Tvoje jméno</span>
         <input id="nameIn" maxlength="18" placeholder="Např. Honza" autocomplete="nickname"></label>
     </div>
+    <div class="card-box" id="tablesBox" hidden>
+      <div><b>Moje stoly</b><br><span class="label">Stoly, které vede tvůj telefon. Zůstatky jsou uložené.</span></div>
+      <div id="tablesList" class="tlist"></div>
+    </div>
+    <div class="card-box" id="recentBox" hidden>
+      <div><b>Naposledy jsem hrál u</b></div>
+      <div id="recentList" class="inline"></div>
+    </div>
     <div class="card-box">
       <div><b>Připojit se ke stolu</b><br><span class="label">Kód ti řekne ten, kdo stůl založil</span></div>
       <form class="inline" id="joinCodeForm">
@@ -283,15 +300,13 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
       </form>
     </div>
     <div class="card-box">
-      <div><b>Založit nový stůl</b><br><span class="label">Tvůj telefon povede hru, nech ho zapnutý</span></div>
+      <div><b>Založit nový stůl</b><br><span class="label">Tvůj telefon povede hru, nech ho zapnutý. Ostatní stoly zůstanou uložené.</span></div>
       <button class="btn" id="hostBtn">Založit stůl</button>
-      <button class="btn" id="resumeBtn" hidden>Pokračovat v uloženém stole</button>
     </div>
     <div class="card-box offcard">
       <div><b>Hrát bez internetu</b><br><span class="label">Třeba v letadle. Jeden telefon zapne Wi-Fi hotspot, ostatní se k němu připojí a spárují se QR kódem.</span></div>
       <button class="btn" id="offJoinBtn">Připojit se offline</button>
       <button class="btn" id="offHostBtn">Založit offline stůl</button>
-      <button class="btn" id="offResumeBtn" hidden>Pokračovat offline v uloženém stole</button>
     </div>
   </section>
 
@@ -324,7 +339,7 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
       <div id="log" class="log" hidden></div>
       <div id="seats"></div>
       <div id="settings"></div>
-      <button class="btn danger" id="leaveBtn">Opustit stůl na tomhle telefonu</button>
+      <button class="btn danger" id="leaveBtn">Odejít na seznam stolů</button>
     </section>
 
     <section id="v-rules" class="stack rules" hidden>
@@ -1087,7 +1102,7 @@ let HS = null;                 // úplný stav (jen u hostitele)
 const seenAt = new Map();      // playerId -> poslední zpráva
 let hostTimer = null;
 
-function hostSave(){ LS.set('host.' + code, HS); }
+function hostSave(){ if (!HS || role !== 'host') return; HS.updated = Date.now(); LS.set('host.' + code, HS); }
 function viewFor(pid){
   const v = structuredClone(HS);
   if (v.hand){
@@ -1103,6 +1118,7 @@ function onlineIds(){
 }
 function sendState(pid){ Bus.pub(base() + '/down/' + pid, { type: 'state', S: viewFor(pid), online }); }
 function broadcast(){
+  if (!HS || role !== 'host') return;
   hostSave();
   online = [...new Set(onlineIds())];
   for (const pid of seenAt.keys()) sendState(pid);
@@ -1189,6 +1205,7 @@ function startClient(c, offline){
   Bus = offline ? RtcBus : MqttBus;
   role = 'client'; code = c;
   LS.set('session', { role, code, offline: !!offline });
+  if (!offline){ const rc = (LS.get('recent') || []).filter(x => x !== c); rc.unshift(c); LS.set('recent', rc.slice(0, 4)); }
   S = null; lastHostMsg = 0; lastBusOk = false;
   showGame();
   setConn(false, offline ? 'Nespárováno se stolem' : 'Připojuji se…');
@@ -1228,7 +1245,7 @@ function setConn(ok, txt){
   render();
 }
 function showGame(){
-  $('lobby').hidden = true; $('game').hidden = false;
+  $('lobby').hidden = true; $('game').hidden = false; $('tablesBtn').hidden = false;
   $('codeShow').textContent = code;
   try { history.replaceState(null, '', location.pathname + location.search + '#' + code); } catch(e){}
   requestWake();
@@ -1252,16 +1269,45 @@ function leaveTable(){
   showLobby();
 }
 function showLobby(){
-  $('connMini').hidden = true;
+  $('connMini').hidden = true; $('tablesBtn').hidden = true;
   $('game').hidden = true; $('lobby').hidden = false;
   $('nameIn').value = LS.get('name') || '';
-  const last = LS.get('lastHost');
-  const rb = $('resumeBtn');
-  if (last && LS.get('host.' + last)) { rb.hidden = false; rb.textContent = `Pokračovat ve stole ${last} (uložené zůstatky)`; }
-  else rb.hidden = true;
-  const orb = $('offResumeBtn');
-  if (last && LS.get('host.' + last)) { orb.hidden = false; orb.textContent = `Pokračovat offline ve stole ${last}`; }
-  else orb.hidden = true;
+  renderTables();
+}
+function savedTables(){
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++){
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith('kh.host.')) continue;
+      const t = LS.get(k.slice(3)); if (!t || !t.players) continue;
+      out.push({ code: k.slice(8), t });
+    }
+  } catch(e){}
+  return out.sort((a, b) => (b.t.updated || 0) - (a.t.updated || 0));
+}
+function ago(ts){
+  if (!ts) return '';
+  const m = Math.round((Date.now() - ts) / 60000);
+  if (m < 1) return 'právě teď';
+  if (m < 60) return `před ${m} min`;
+  const h = Math.round(m / 60); if (h < 24) return `před ${h} h`;
+  return `před ${Math.round(h / 24)} dny`;
+}
+function renderTables(){
+  const list = savedTables();
+  $('tablesBox').hidden = !list.length;
+  $('tablesList').innerHTML = list.map(({ code: c, t }) => {
+    const names = t.players.map(p => esc(p.name)).join(', ') || 'zatím bez hráčů';
+    const del = armed === 'del:' + c;
+    return `<div class="titem">
+      <div class="tinfo"><span class="tcode">${esc(c)}</span><span class="tmeta">${names}</span><span class="tmeta">${t.handNo ? 'odehráno: ' + hry(t.handNo) + ' · ' : ''}${ago(t.updated)}</span></div>
+      <div class="tbtns"><button class="btn small primary" data-a="topen" data-code="${esc(c)}">Online</button><button class="btn small" data-a="toff" data-code="${esc(c)}">Offline</button><button class="btn small danger" data-a="tdel" data-code="${esc(c)}">${del ? 'Smazat?' : '✕'}</button></div>
+    </div>`;
+  }).join('');
+  const rec = (LS.get('recent') || []).filter(c => !list.some(x => x.code === c));
+  $('recentBox').hidden = !rec.length;
+  $('recentList').innerHTML = rec.map(c => `<button class="btn small" data-a="tjoin" data-code="${esc(c)}">${esc(c)}</button>`).join('');
 }
 function newCode(){
   const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -1761,7 +1807,7 @@ document.addEventListener('click', e => {
   if (!t) return;
   if (t.dataset.tab){ tab = t.dataset.tab; armed = null; render(); return; }
   const a = t.dataset.a;
-  if (a !== 'remove' && a !== 'reset' && a !== 'fold' && a !== 'abort') armed = null;
+  if (a !== 'remove' && a !== 'reset' && a !== 'fold' && a !== 'abort' && a !== 'tdel') armed = null;
   switch (a){
     case 'hide': hideCards = !hideCards; render(); break;
     case 'deal': send('deal'); break;
@@ -1769,6 +1815,14 @@ document.addEventListener('click', e => {
       if (armed !== 'abort'){ armed = 'abort'; render(); break; }
       armed = null; send('abort'); break;
     case 'gooff': goOffline(); break;
+    case 'topen': if (needName()) startHost(t.dataset.code, true, false); break;
+    case 'toff': if (needName()) startHost(t.dataset.code, true, true); break;
+    case 'tjoin': if (needName()) startClient(t.dataset.code, false); break;
+    case 'tdel': {
+      const k = 'del:' + t.dataset.code;
+      if (armed !== k){ armed = k; renderTables(); break; }
+      armed = null; LS.del('host.' + t.dataset.code); renderTables(); toast('Stůl smazán.'); break;
+    }
     case 'goon': goOnline(); break;
     case 'phost': hostPair(); break;
     case 'pjoin': clientPair(); break;
@@ -1828,28 +1882,25 @@ document.addEventListener('submit', e => {
 });
 $('hostBtn').addEventListener('click', () => {
   if (!needName()) return;
-  const c = newCode(); LS.set('lastHost', c); startHost(c, false);
+  const c = newCode(); startHost(c, false);
 });
 $('offHostBtn').addEventListener('click', () => {
   if (!needName()) return;
   startHost(newCode(), false, true);
   setTimeout(hostPair, 300);
 });
-$('offResumeBtn').addEventListener('click', () => {
-  if (!needName()) return;
-  const c = LS.get('lastHost'); if (c) startHost(c, true, true);
+$('tablesBtn').addEventListener('click', () => {
+  if (role === 'host' && armed !== 'leavetop'){ armed = 'leavetop'; $('tablesBtn').textContent = 'Opravdu odejít?'; toast('Stůl se ostatním zavře, zůstatky zůstanou uložené. Ťukni znovu.'); setTimeout(() => { if (armed === 'leavetop'){ armed = null; $('tablesBtn').textContent = 'Stoly'; } }, 4000); return; }
+  armed = null; $('tablesBtn').textContent = 'Stoly';
+  leaveTable();
 });
 $('offJoinBtn').addEventListener('click', () => {
   if (!needName()) return;
   clientPair();
 });
-$('resumeBtn').addEventListener('click', () => {
-  if (!needName()) return;
-  const c = LS.get('lastHost'); if (c) startHost(c, true);
-});
 $('leaveBtn').addEventListener('click', () => {
   if (role === 'host' && armed !== 'leave'){ armed = 'leave'; $('leaveBtn').textContent = 'Opravdu? Stůl se ostatním zavře (zůstatky zůstanou uložené)'; return; }
-  armed = null; $('leaveBtn').textContent = 'Opustit stůl na tomhle telefonu';
+  armed = null; $('leaveBtn').textContent = 'Odejít na seznam stolů';
   leaveTable();
 });
 $('soundBtn').addEventListener('click', toggleSound);
