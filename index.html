@@ -308,6 +308,10 @@ input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-di
       <div><b>Založit nový stůl</b><br><span class="label">Tvůj telefon povede hru, nech ho zapnutý. Ostatní stoly zůstanou uložené.</span></div>
       <button class="btn" id="hostBtn">Založit stůl</button>
     </div>
+    <div class="card-box">
+      <div><b>Hrát sám proti počítači</b><br><span class="label">Tři počítačoví soupeři, bez internetu i bez dalších telefonů</span></div>
+      <button class="btn" id="soloBtn">Hrát proti počítači</button>
+    </div>
     <div class="card-box offcard">
       <div><b>Hrát bez internetu</b><br><span class="label">Třeba v letadle. Jedno zařízení zapne Wi-Fi hotspot a na hraní ho nepoužívejte. Hráči se k hotspotu připojí a spárují se QR kódem.</span></div>
       <button class="btn" id="offJoinBtn">Připojit se offline</button>
@@ -758,6 +762,47 @@ function resetBalances(S){
 
 if (typeof module !== 'undefined') module.exports = { emptyState, joinTable, startHand, nextDealer, blindsFor, setConfig, resetBalances, act, rebuy, bestScore, handName, cmpScore, P, inHand };
 </script>
+<script>// ===== Počítačoví hráči (boti) — bez DOM =====
+// Bot rozhoduje jen z pohledu, který by viděl hráč na jeho místě (cizí karty skryté).
+// Fáze 1: jednoduchá pravidla s náhodou. Výsledek je vždy platná akce pro engine.
+const BOT_NAMES = ['Pepa', 'Franta', 'Mirek', 'Jarda', 'Láďa', 'Venca', 'Tonda', 'Zdeněk', 'Karel', 'Míla'];
+
+function botLegal(V, id){
+  const h = V.hand;
+  const seat = h.seats.find(s => s.id === id);
+  const p = V.players.find(x => x.id === id);
+  const toCall = Math.max(0, h.currentBet - seat.bet);
+  const maxTo = seat.bet + p.chips;
+  const minTo = Math.min(h.currentBet + h.minRaise, maxTo);
+  const canRaise = maxTo > h.currentBet && p.chips > toCall;
+  const pot = h.seats.reduce((a, s) => a + s.total, 0);
+  return { h, seat, p, toCall, maxTo, minTo, canRaise, pot, step: h.sb || 1 };
+}
+// výše sázky jako podíl banku, zaokrouhlená na malý blind a oříznutá na povolený rozsah
+function botSize(L, frac){
+  let x = L.h.currentBet + frac * (L.pot + L.toCall);
+  x = Math.round(x / L.step) * L.step;
+  x = Math.max(L.minTo, Math.min(L.maxTo, x));
+  if (L.maxTo - x < L.step) x = L.maxTo;   // zbytek pod jeden blind se nevyplatí držet
+  return x;
+}
+function botDecide(V, id, rand){
+  rand = rand || Math.random;
+  const L = botLegal(V, id);
+  const r = rand();
+  if (L.toCall === 0){
+    if (L.canRaise && r < 0.25) return { type: 'raise', amount: botSize(L, 0.4 + rand() * 0.6) };
+    return { type: 'check' };
+  }
+  const cost = L.toCall / (L.p.chips + L.seat.bet);           // kolik ze zbytku stacku stojí dorovnat
+  const foldP = Math.min(0.85, 0.12 + cost * 1.6);
+  if (r < foldP) return { type: 'fold' };
+  if (L.canRaise && r > 0.9) return { type: 'raise', amount: botSize(L, 0.6 + rand() * 0.6) };
+  return { type: 'call' };
+}
+
+if (typeof module !== 'undefined') module.exports.botDecide = botDecide;
+</script>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -879,8 +924,14 @@ const RtcBus = {
     };
   },
 };
+// ================= SÓLO: hra jen v tomhle telefonu proti botům, žádná síť =================
+const SoloBus = {
+  start(){}, stop(){}, kick(){}, pub(){},
+  connected(){ return true; },
+};
 let Bus = MqttBus;
 const isOffline = () => Bus === RtcBus;
+const isSolo = () => Bus === SoloBus;
 
 // --- zhuštění SDP do krátkého textu pro QR kód ---
 function sdpPack(desc, kind, extra){
@@ -1221,7 +1272,53 @@ function viewFor(pid){
 }
 function onlineIds(){
   const now = Date.now();
-  return [myId, ...[...seenAt].filter(([, t]) => now - t < 20000).map(([id]) => id)];
+  const bots = HS ? HS.players.filter(p => p.bot).map(p => p.id) : [];
+  return [myId, ...bots, ...[...seenAt].filter(([, t]) => now - t < 20000).map(([id]) => id)];
+}
+// ---- boti: běží jen u hostitele, hrají přes stejné příkazy jako lidé ----
+function addBot(S){
+  if (S.players.length >= 8) fail('U stolu je plno (max 8).');
+  const used = new Set(S.players.map(p => p.name.toLowerCase()));
+  const free = BOT_NAMES.filter(n => !used.has(n.toLowerCase()));
+  const name = free.length ? free[rnd(free.length)] : 'Bot ' + (S.players.length + 1);
+  const id = 'bot_' + rid();
+  joinTable(S, id, name);
+  P(S, id).bot = true;
+}
+let botT = null;
+function botSchedule(){
+  clearTimeout(botT); botT = null;
+  if (role !== 'host' || !HS) return;
+  if (!inHand(HS)){
+    // bot bez žetonů si mezi hrami dokoupí, aby stůl zůstal plný
+    const broke = HS.players.find(p => p.bot && p.chips === 0);
+    if (broke) botT = setTimeout(() => { if (role === 'host' && HS && !inHand(HS) && P(HS, broke.id) && P(HS, broke.id).chips === 0) applyCmd(broke.id, 'rebuy', {}); }, 600);
+    return;
+  }
+  const h = HS.hand, seat = h.seats[h.toAct];
+  const p = seat && P(HS, seat.id);
+  if (!p || !p.bot) return;
+  const key = `${h.no}|${h.stage}|${h.toAct}|${HS.v}`;
+  const still = () => role === 'host' && HS && inHand(HS) && `${HS.hand.no}|${HS.hand.stage}|${HS.hand.toAct}|${HS.v}` === key;
+  const think = 900 + Math.random() * 1600;
+  const t0 = Date.now();
+  // nejdřív doběhnou oznámení předchozích akcí, pak bot „přemýšlí“
+  const waitFx = () => {
+    if (!still()) return;
+    if (FX.busy && Date.now() - t0 < 10000){ botT = setTimeout(waitFx, 200); return; }
+    botT = setTimeout(() => {
+      if (!still()) return;
+      let d;
+      try { d = botDecide(viewFor(seat.id), seat.id); } catch(e){ d = null; }
+      let err = d ? applyCmd(seat.id, 'act', d) : 'bez rozhodnutí';
+      if (err){
+        // pojistka: když by rozhodnutí neprošlo, bot čeká nebo složí
+        const toCall = HS.hand.currentBet - HS.hand.seats[HS.hand.toAct].bet;
+        applyCmd(seat.id, 'act', { type: toCall > 0 ? 'fold' : 'check' });
+      }
+    }, think);
+  };
+  botT = setTimeout(waitFx, 150);
 }
 function sendState(pid){ Bus.pub(base() + '/down/' + pid, { type: 'state', S: viewFor(pid), online }); }
 function broadcast(){
@@ -1230,13 +1327,15 @@ function broadcast(){
   online = [...new Set(onlineIds())];
   for (const pid of seenAt.keys()) sendState(pid);
   S = viewFor(myId); render();
+  botSchedule();
 }
 function applyCmd(pid, cmd, args){
   const s0 = structuredClone(HS);
   try {
     switch (cmd){
       case 'join': joinTable(HS, pid, args.name); break;
-      case 'deal': { const nd = nextDealer(HS); startHand(HS, pid, !!(nd && !onlineIds().includes(nd.id))); break; }
+      case 'deal': { const nd = nextDealer(HS); startHand(HS, pid, !!(nd && (nd.bot || !onlineIds().includes(nd.id)))); break; }
+      case 'addbot': if (pid !== myId) fail('Počítačového hráče přidává jen hostitel.'); addBot(HS); break;
       case 'act': act(HS, pid, args.type, args.amount); break;
       case 'rebuy': rebuy(HS, pid); break;
       case 'away': setAway(HS, pid, args.away); break;
@@ -1280,21 +1379,27 @@ function hostOnMessage(topic, m){
     else Bus.pub(base() + '/down/' + pid, { type: 'pong' });
   }
 }
+// offline: false = online (MQTT), true = offline (WebRTC), 'solo' = jen tenhle telefon proti botům
 function startHost(c, resume, offline){
   if (Bus) Bus.stop();
-  Bus = offline ? RtcBus : MqttBus;
+  clearTimeout(botT); botT = null;
+  const solo = offline === 'solo';
+  Bus = solo ? SoloBus : offline ? RtcBus : MqttBus;
   role = 'host'; code = c;
-  LS.set('session', { role, code, offline: !!offline });
+  LS.set('session', { role, code, offline: !!offline, solo });
   LS.set('lastHost', c);
   HS = (resume && LS.get('host.' + code)) || emptyState();
   if (!HS.players) HS = emptyState();
+  if (solo) HS.solo = true;
   const name = LS.get('name');
   if (name && !P(HS, myId)) { try { joinTable(HS, myId, name); } catch(e){} }
   seenAt.clear();
+  online = [...new Set(onlineIds())];
   S = viewFor(myId);
   showGame();
   Bus.start([base() + '/up'], hostOnMessage);
-  if (offline) setConn(true, 'Offline stůl'); else setConn(false, 'Otevírám stůl…');
+  if (solo) setConn(true, 'Hra proti počítači');
+  else if (offline) setConn(true, 'Offline stůl'); else setConn(false, 'Otevírám stůl…');
   clearInterval(hostTimer);
   let prevOnline = '';
   hostTimer = setInterval(() => {
@@ -1354,6 +1459,7 @@ function setConn(ok, txt){
 function showGame(){
   $('lobby').hidden = true; $('game').hidden = false; $('tablesBtn').hidden = false;
   $('codeShow').textContent = code;
+  $('copyLink').hidden = isSolo();
   try { history.replaceState(null, '', location.pathname + location.search + '#' + code); } catch(e){}
   requestWake();
 }
@@ -1370,7 +1476,7 @@ document.addEventListener('visibilitychange', () => {
 
 function leaveTable(){
   LS.del('session');
-  pairClose(); Bus.stop(); Bus = MqttBus; clearInterval(hostTimer); clearInterval(clientTimer);
+  pairClose(); Bus.stop(); Bus = MqttBus; clearInterval(hostTimer); clearInterval(clientTimer); clearTimeout(botT); botT = null;
   role = null; S = null; HS = null; seenAt.clear();
   try { history.replaceState(null, '', location.pathname + location.search); } catch(e){}
   showLobby();
@@ -1409,7 +1515,9 @@ function renderTables(){
     const del = armed === 'del:' + c;
     return `<div class="titem">
       <div class="tinfo"><span class="tcode">${esc(c)}</span><span class="tmeta">${names}</span><span class="tmeta">${t.handNo ? 'odehráno: ' + hry(t.handNo) + ' · ' : ''}${ago(t.updated)}</span></div>
-      <div class="tbtns"><button class="btn small primary" data-a="topen" data-code="${esc(c)}">Online</button><button class="btn small" data-a="toff" data-code="${esc(c)}">Offline</button><button class="btn small danger" data-a="tdel" data-code="${esc(c)}">${del ? 'Smazat?' : '✕'}</button></div>
+      <div class="tbtns">${t.solo
+        ? `<button class="btn small primary" data-a="tsolo" data-code="${esc(c)}">Hrát proti počítači</button>`
+        : `<button class="btn small primary" data-a="topen" data-code="${esc(c)}">Online</button><button class="btn small" data-a="toff" data-code="${esc(c)}">Offline</button>`}<button class="btn small danger" data-a="tdel" data-code="${esc(c)}">${del ? 'Smazat?' : '✕'}</button></div>
     </div>`;
   }).join('');
   const rec = (LS.get('recent') || []).filter(c => !list.some(x => x.code === c));
@@ -1436,6 +1544,7 @@ const FX = {
 function soundActive(){
   if (FX.mode === 'on') return true;
   if (FX.mode === 'off' || !S) return false;
+  if (isSolo()) return true;   // jediný telefon u stolu
   const d = S.dealerId || (nextDealer(S) || {}).id;
   return d === myId;
 }
@@ -1624,6 +1733,7 @@ function renderOpps(){
   const html = order.map(p => {
     const s = seatOf(p.id);
     const tags = [];
+    if (p.bot) tags.push('<span class="tag">PC</span>');
     if (h && p.id === S.dealerId) tags.push('<span class="tag d">D</span>');
     if (live && s && p.id === h.sbId) tags.push('<span class="tag">SB</span>');
     if (live && s && p.id === h.bbId) tags.push('<span class="tag">BB</span>');
@@ -1714,9 +1824,12 @@ function renderResult(){
         <span class="dealtxt"><b>${title}</b><small>Hra č. ${(S.handNo || 0) + 1} · blindy ${nb.sb}/${nb.bb}</small></span>
       </button>`;
     if (nd && nd.id === myId) html += dealBtn(h ? 'Rozdat další hru' : 'Rozdat první hru');
+    else if (nd && nd.bot) html += dealBtn('Rozdat za ' + esc(nd.name));
     else if (nd && !isOnline(nd.id)) html += `<div class="notice">Rozdávat má <b>${esc(nd.name)}</b>, ale není připojený.</div>` + dealBtn('Rozdat za ' + esc(nd.name));
     else if (nd) html += `<div class="notice">Další hru rozdává <b>${esc(nd.name)}</b>.</div>`;
-    if (!nd) html += `<div class="notice">Ke hře jsou potřeba aspoň dva hráči se žetony. Ostatní se připojí kódem <b>${esc(code)}</b>. Kdo nemá žetony, dokoupí v záložce Hráči.</div>`;
+    if (!nd) html += isSolo()
+      ? `<div class="notice">Ke hře jsou potřeba aspoň dva hráči se žetony. Počítačové hráče i dokoupení žetonů najdeš v záložce Hráči.</div>`
+      : `<div class="notice">Ke hře jsou potřeba aspoň dva hráči se žetony. Ostatní se připojí kódem <b>${esc(code)}</b>. Kdo nemá žetony, dokoupí v záložce Hráči.</div>`;
   }
   setHTML(el, html);
 }
@@ -1821,7 +1934,7 @@ function renderScore(){
     const locked = inHand(S) && seatOf(p.id);
     const rmKey = 'rm:' + p.id;
     return `<tr>
-      <td><b>${esc(p.name)}</b>${mine ? ' <span class="tag">ty</span>' : ''}${!isOnline(p.id) ? ' <span class="tag warn">offline</span>' : ''}${p.away ? ' <span class="tag warn">mimo</span>' : ''}</td>
+      <td><b>${esc(p.name)}</b>${mine ? ' <span class="tag">ty</span>' : ''}${p.bot ? ' <span class="tag">PC</span>' : ''}${!isOnline(p.id) ? ' <span class="tag warn">offline</span>' : ''}${p.away ? ' <span class="tag warn">mimo</span>' : ''}</td>
       <td class="n">${p.chips}</td><td class="n">${p.buyins}</td>
       <td class="n ${prof > 0 ? 'pos' : prof < 0 ? 'neg' : ''}">${prof > 0 ? '+' : ''}${prof}</td>
     </tr>
@@ -1854,13 +1967,20 @@ function renderSeats(){
 function renderMode(){
   const el = $('modebox'); if (!el) return;
   if (!role){ setHTML(el, ''); return; }
+  const botBtn = role === 'host' && S && S.players.length < 8 ? '<button class="btn small" data-a="addbot">Přidat počítačového hráče</button>' : '';
+  if (isSolo()){
+    setHTML(el, `<div class="modebox"><div><b>Hra proti počítači</b> (jen v tomhle telefonu)</div>
+      <div class="inline">${botBtn}</div>
+      <div class="label">Počítačové hráče odebereš v tabulce zůstatků. Dokupují si sami, když přijdou o žetony.</div></div>`);
+    return;
+  }
   if (isOffline()){
     setHTML(el, `<div class="modebox"><div><b>Offline režim</b> (hotspot + QR párování)</div>
       <div class="inline">${role === 'host' ? '<button class="btn small primary" data-a="phost">Spárovat hráče</button>' : '<button class="btn small primary" data-a="pjoin">Spárovat se stolem</button>'}
-      <button class="btn small" data-a="goon">Přepnout zpět online</button><button class="btn small" data-a="pnet">Test sítě</button></div></div>`);
+      <button class="btn small" data-a="goon">Přepnout zpět online</button><button class="btn small" data-a="pnet">Test sítě</button>${botBtn}</div></div>`);
   } else {
     setHTML(el, `<div class="modebox"><div><b>Online režim</b> (přes internet)</div>
-      <div class="inline"><button class="btn small" data-a="gooff">${role === 'host' ? 'Hrát offline (bez internetu)' : 'Připojit se offline'}</button></div>
+      <div class="inline"><button class="btn small" data-a="gooff">${role === 'host' ? 'Hrát offline (bez internetu)' : 'Připojit se offline'}</button>${botBtn}</div>
       <div class="label">${role === 'host' ? 'Stůl, hráči i zůstatky zůstanou, jen se přepne spojení.' : 'Hostitel musí nejdřív přepnout stůl do offline režimu.'}</div></div>`);
   }
 }
@@ -1923,6 +2043,8 @@ document.addEventListener('click', e => {
       armed = null; send('abort'); break;
     case 'gooff': goOffline(); break;
     case 'topen': if (needName()) startHost(t.dataset.code, true, false); break;
+    case 'tsolo': if (needName()) startHost(t.dataset.code, true, 'solo'); break;
+    case 'addbot': send('addbot'); break;
     case 'toff': if (needName()) startHost(t.dataset.code, true, true); break;
     case 'tjoin': if (needName()) startClient(t.dataset.code, false); break;
     case 'tdel': {
@@ -1992,6 +2114,11 @@ $('hostBtn').addEventListener('click', () => {
   if (!needName()) return;
   const c = newCode(); startHost(c, false);
 });
+$('soloBtn').addEventListener('click', () => {
+  if (!needName()) return;
+  startHost(newCode(), false, 'solo');
+  for (let i = 0; i < 3; i++) applyCmd(myId, 'addbot', {});
+});
 $('offHostBtn').addEventListener('click', () => {
   if (!needName()) return;
   startHost(newCode(), false, true);
@@ -2047,7 +2174,7 @@ showInstall();
   if (typeof mqtt === 'undefined' && false){ document.body.insertAdjacentHTML('afterbegin', '<div class="notice">Knihovnu pro spojení se nepodařilo načíst.</div>'); }
   const hash = (location.hash || '').replace('#', '').toUpperCase();
   const sess = LS.get('session');
-  if (sess && sess.role === 'host' && LS.get('host.' + sess.code) && (!hash || hash === sess.code)) { startHost(sess.code, true, !!sess.offline); return; }
+  if (sess && sess.role === 'host' && LS.get('host.' + sess.code) && (!hash || hash === sess.code)) { startHost(sess.code, true, sess.solo ? 'solo' : !!sess.offline); return; }
   if (sess && sess.role === 'client' && sess.offline && LS.get('name')) { startClient(sess.code, true); return; }
   if (/^[A-Z]{4}$/.test(hash) && LS.get('name')) { startClient(hash); return; }
   if (sess && sess.role === 'client' && LS.get('name') && !hash) { startClient(sess.code); return; }
