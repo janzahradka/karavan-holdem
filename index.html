@@ -929,20 +929,47 @@ async function netProbe(){
   pc.close();
   return list;
 }
+// samotest: spojí telefon sám se sebou přes jeho síťovou adresu (bez localhostu)
+function onlyAddr(str, keep){
+  const p = str.split('|');
+  p[7] = (p[7] ? p[7].split(';') : []).filter(c => keep(c.slice(0, c.lastIndexOf(',')))).join(';');
+  return p.join('|');
+}
+async function selfTest(){
+  const keep = a => !a.endsWith('.local') && a !== '127.0.0.1' && a !== '::1' && !a.startsWith('fe80');
+  const a = new RTCPeerConnection(RTC_CFG), b = new RTCPeerConnection(RTC_CFG);
+  try {
+    const dc = a.createDataChannel('self');
+    const opened = new Promise(res => { dc.onopen = () => res(true); setTimeout(() => res(false), 7000); });
+    await a.setLocalDescription(await a.createOffer()); await waitIce(a);
+    const offer = onlyAddr(sdpPack(a.localDescription, 'o', ''), keep);
+    if (!candList(offer).length) return false;
+    await b.setRemoteDescription(sdpUnpack(offer).desc);
+    await b.setLocalDescription(await b.createAnswer()); await waitIce(b);
+    const ans = onlyAddr(sdpPack(b.localDescription, 'a', ''), keep);
+    if (!candList(ans).length) return false;
+    await a.setRemoteDescription(sdpUnpack(ans).desc);
+    return await opened;
+  } catch(e){ return false; }
+  finally { try { a.close(); b.close(); } catch(e){} }
+}
 async function showNetTest(){
   pairShow({ title: 'Test sítě', body: '<div class="pair-wait">♠</div>', hint: 'Zjišťuji adresy telefonu…', buttons: [['Zavřít', 'pclose']] });
   let cam = false;
   try { await camStart(); cam = true; } catch(e){}
   let list = [];
   try { list = await netProbe(); } catch(e){}
+  pairShow({ title: 'Test sítě', body: '<div class="pair-wait">♠</div>', hint: 'Zkouším spojení přes síť…', buttons: [['Zavřít', 'pclose']] });
+  const selfOk = list.length ? await selfTest() : false;
   camStop();
   const lan = list.filter(a => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a));
   let verdict;
   if (!list.length) verdict = 'Telefon nemá žádnou použitelnou síťovou adresu. Pokud tenhle telefon sám vysílá hotspot, prohlížeč na něm hotspot nevidí a hrát přes něj nepůjde – hotspot musí vysílat jiné zařízení.';
   else if (!lan.length && list.every(a => a.endsWith('.local'))) verdict = 'Adresa je skrytá. Povol kameru a zkus to znovu.';
   else if (!lan.length) verdict = 'Telefon nemá adresu v místní Wi-Fi síti. Připoj se k hotspotu.';
+  else if (!selfOk) verdict = '<b>Na tomhle telefonu spojení v místní síti nefunguje.</b> Typicky jde o telefon, který sám vysílá hotspot, v prohlížeči Chrome. Otevři hru na tomhle telefonu ve <b>Firefoxu</b>, nebo ať hotspot vysílá jiný telefon.';
   else verdict = 'V pořádku, telefon je v místní síti a může hrát offline.';
-  pairShow({ title: 'Test sítě', body: `<div class="nettest"><div><span class="label">Adresy telefonu</span><div>${addrTxt(list)}</div></div><div><span class="label">Kamera</span><div>${cam ? 'povolená' : 'nepovolená'}</div></div></div>`,
+  pairShow({ title: 'Test sítě', body: `<div class="nettest"><div><span class="label">Adresy telefonu</span><div>${addrTxt(list)}</div></div><div><span class="label">Spojení přes síť</span><div>${list.length ? (selfOk ? 'funguje' : '<b class="neg">nefunguje</b>') : '–'}</div></div><div><span class="label">Kamera</span><div>${cam ? 'povolená' : 'nepovolená'}</div></div></div>`,
     hint: verdict, buttons: [['Zavřít', 'pclose'], ['Znovu', 'pnet', 'primary']] });
 }
 
@@ -1123,7 +1150,7 @@ async function hostGotAnswer(txt){
       clearInterval(ctx.diagT);
       diagHtml(ctx.peer.pc, ctx.peer.log).then(dh => { if (pairCtx !== ctx) return;
       pairShow({ title: 'Spojení se nepodařilo', body: dh + `<div class="nettest"><div><span class="label">Adresy hostitele</span><div>${addrTxt(candList(ctx.offer))}</div></div><div><span class="label">Adresy hráče</span><div>${addrTxt(candList(ctx.answer))}</div></div><div><span class="label">Stav</span><div>${esc(ctx.peer.pc.iceConnectionState)}</div></div></div>`,
-        hint: 'Telefony se v síti nespojily. Udělej screenshot téhle obrazovky i obrazovky hráče a pošli je.', buttons: [['Zavřít', 'pclose'], ['Test sítě', 'pnet'], ['Znovu', 'phost', 'primary']] }); });
+        hint: 'Telefony se v síti nespojily. Nejčastější příčina: telefon, který vysílá hotspot, hraje v Chrome. Ať na něm hráč otevře hru ve <b>Firefoxu</b>. Ověříš to přes <b>Test sítě</b> na tom telefonu.', buttons: [['Zavřít', 'pclose'], ['Test sítě', 'pnet'], ['Znovu', 'phost', 'primary']] }); });
   }, 20000);
 }
 
