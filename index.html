@@ -267,6 +267,9 @@ td.n{text-align:right}
 .tbtns .btn.small{min-height:36px}
 .pair-addr{margin-top:8px;font-size:12px;color:var(--muted);text-align:center;word-break:break-all}
 .nettest{display:flex;flex-direction:column;gap:8px;width:100%;font-size:14px;word-break:break-all}
+.diag{text-align:left;font-size:11px;line-height:1.4;color:var(--muted);word-break:break-all;width:100%}
+.diag summary{cursor:pointer;color:var(--ink);font-size:12px}
+.diag-sub{margin-top:4px;color:var(--ink)}
 input.codein{text-transform:uppercase;letter-spacing:.3em;font-family:var(--f-display);font-size:22px;max-width:9ch}
 </style>
 </head>
@@ -943,6 +946,38 @@ async function showNetTest(){
     hint: verdict, buttons: [['Zavřít', 'pclose'], ['Znovu', 'pnet', 'primary']] });
 }
 
+// --- průběh spojení (pro diagnostiku) ---
+function watchPc(pc, onUpdate){
+  const log = [];
+  const push = t => { const sec = ((Date.now() - t0) / 1000).toFixed(1); log.push(sec + ' s ' + t); onUpdate && onUpdate(); };
+  const t0 = Date.now();
+  pc.addEventListener('iceconnectionstatechange', () => push('ICE: ' + pc.iceConnectionState));
+  pc.addEventListener('connectionstatechange', () => push('spojení: ' + pc.connectionState));
+  return log;
+}
+async function pcStats(pc){
+  try {
+    const st = await pc.getStats(); const loc = {}, rem = {}; const pairs = [];
+    st.forEach(x => { if (x.type === 'local-candidate') loc[x.id] = x; if (x.type === 'remote-candidate') rem[x.id] = x; });
+    st.forEach(x => {
+      if (x.type !== 'candidate-pair') return;
+      const l = loc[x.localCandidateId] || {}, rm = rem[x.remoteCandidateId] || {};
+      pairs.push(`${l.address || l.ip || '?'}:${l.port || ''} → ${rm.address || rm.ip || '?'}:${rm.port || ''} (${rm.candidateType || ''}) ${x.state}; dotazy ${x.requestsSent || 0}/${x.requestsReceived || 0}, odpovědi ${x.responsesSent || 0}/${x.responsesReceived || 0}`);
+    });
+    let dtls = '';
+    st.forEach(x => { if (x.type === 'transport') dtls = x.dtlsState || ''; });
+    return { pairs, dtls };
+  } catch(e){ return { pairs: [], dtls: '' }; }
+}
+async function diagHtml(pc, log){
+  const { pairs, dtls } = await pcStats(pc);
+  return `<details class="diag" open><summary>Podrobnosti spojení</summary>
+    <div>ICE: ${esc(pc.iceConnectionState)} · spojení: ${esc(pc.connectionState)}${dtls ? ' · DTLS: ' + esc(dtls) : ''}</div>
+    <div class="diag-sub">Páry adres (odesláno/přijato):</div>${pairs.length ? pairs.map(p => `<div>${esc(p)}</div>`).join('') : '<div>žádné</div>'}
+    <div class="diag-sub">Průběh:</div>${(log || []).map(l => `<div>${esc(l)}</div>`).join('') || '<div>–</div>'}
+  </details>`;
+}
+
 // --- QR kód a kamera ---
 function qrImg(text){
   const q = qrcode(0, 'M'); q.addData(text); q.make();
@@ -1013,7 +1048,7 @@ function pairClose(keepPeer){
       RtcBus.peers = RtcBus.peers.filter(x => x !== p);
     }
   }
-  clearTimeout(pairCtx && pairCtx.timer);
+  clearTimeout(pairCtx && pairCtx.timer); clearInterval(pairCtx && pairCtx.diagT);
   pairCtx = null;
   $('pair').hidden = true; $('pair').innerHTML = '';
 }
@@ -1042,6 +1077,7 @@ async function hostPair(){
   const pc = new RTCPeerConnection(RTC_CFG);
   const dc = pc.createDataChannel('kh', { ordered: true });
   const peer = { pc, dc, pid: null };
+  peer.log = watchPc(pc);
   RtcBus.peers.push(peer);
   RtcBus.wire(dc, peer);
   dc.onopen = () => {
@@ -1079,13 +1115,16 @@ async function hostGotAnswer(txt){
   pairCtx.answer = txt;
   try { await pairCtx.peer.pc.setRemoteDescription(u.desc); }
   catch(e){ pairShow({ title: 'Kód nesedí', body: '', hint: 'Tahle odpověď patří k jinému kódu. Začni párování znovu.', buttons: [['Zavřít', 'pclose']] }); return; }
-  pairShow({ title: 'Připojuji…', body: '<div class="pair-wait">♠</div>', hint: 'Oba telefony musí být na stejné Wi-Fi (hotspotu).', buttons: [['Zrušit', 'pclose']] });
+  pairShow({ title: 'Připojuji…', body: '<div class="pair-wait">♠</div><div id="pairDiag" class="pair-addr"></div>', hint: 'Oba telefony musí být na stejné Wi-Fi (hotspotu).', buttons: [['Zrušit', 'pclose']] });
   const ctx = pairCtx;
+  ctx.diagT = setInterval(async () => { const el = $('pairDiag'); if (!el || pairCtx !== ctx){ clearInterval(ctx.diagT); return; } el.innerHTML = await diagHtml(ctx.peer.pc, ctx.peer.log); }, 1000);
   ctx.timer = setTimeout(() => {
     if (pairCtx === ctx && ctx.peer.dc.readyState !== 'open')
-      pairShow({ title: 'Spojení se nepodařilo', body: `<div class="nettest"><div><span class="label">Adresy hostitele</span><div>${addrTxt(candList(ctx.offer))}</div></div><div><span class="label">Adresy hráče</span><div>${addrTxt(candList(ctx.answer))}</div></div><div><span class="label">Stav</span><div>${esc(ctx.peer.pc.iceConnectionState)}</div></div></div>`,
-        hint: 'Telefony se nenašly v síti. Pokud jeden z nich sám vysílá hotspot, prohlížeč na něm hotspot nejspíš nevidí. Zkuste <b>Test sítě</b> na obou telefonech.', buttons: [['Zavřít', 'pclose'], ['Test sítě', 'pnet'], ['Znovu', 'phost', 'primary']] });
-  }, 15000);
+      clearInterval(ctx.diagT);
+      diagHtml(ctx.peer.pc, ctx.peer.log).then(dh => { if (pairCtx !== ctx) return;
+      pairShow({ title: 'Spojení se nepodařilo', body: dh + `<div class="nettest"><div><span class="label">Adresy hostitele</span><div>${addrTxt(candList(ctx.offer))}</div></div><div><span class="label">Adresy hráče</span><div>${addrTxt(candList(ctx.answer))}</div></div><div><span class="label">Stav</span><div>${esc(ctx.peer.pc.iceConnectionState)}</div></div></div>`,
+        hint: 'Telefony se v síti nespojily. Udělej screenshot téhle obrazovky i obrazovky hráče a pošli je.', buttons: [['Zavřít', 'pclose'], ['Test sítě', 'pnet'], ['Znovu', 'phost', 'primary']] }); });
+  }, 20000);
 }
 
 // --- hráč: připojit se k offline stolu ---
@@ -1104,6 +1143,7 @@ async function clientGotOffer(txt){
   RtcBus.hostDc = null;
   const pc = new RTCPeerConnection(RTC_CFG);
   RtcBus.hostPc = pc;
+  const clog = watchPc(pc);
   pc.ondatachannel = ev => {
     const dc = ev.channel;
     RtcBus.hostDc = dc;
@@ -1118,7 +1158,10 @@ async function clientGotOffer(txt){
   camStop();
   const str = sdpPack(pc.localDescription, 'a', '');
   if (role !== 'client' || code !== u.extra || !isOffline()) startClient(u.extra, true);
-  pairShow({ title: 'Ukaž kód hostiteli', body: qrImg(str) + `<div class="pair-addr">Moje adresy: ${addrTxt(candList(str))}</div>`,
+  const cctx = { client: true };
+  pairCtx = cctx;
+  cctx.diagT = setInterval(async () => { const el = $('pairDiag'); if (!el || pairCtx !== cctx){ clearInterval(cctx.diagT); return; } if (pc.iceConnectionState !== 'new') el.innerHTML = await diagHtml(pc, clog); }, 1000);
+  pairShow({ title: 'Ukaž kód hostiteli', body: qrImg(str) + `<div class="pair-addr">Moje adresy: ${addrTxt(candList(str))}</div><div id="pairDiag" class="pair-addr"></div>`,
     hint: 'Hostitel ťukne na <b>Další: naskenovat hráče</b> a namíří kameru sem. Okno se samo zavře, až se spojíte.',
     buttons: [['Zrušit', 'pclose'], ['Skenovat znovu', 'pjoin']] });
 }
