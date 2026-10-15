@@ -764,8 +764,99 @@ if (typeof module !== 'undefined') module.exports = { emptyState, joinTable, sta
 </script>
 <script>// ===== Počítačoví hráči (boti) — bez DOM =====
 // Bot rozhoduje jen z pohledu, který by viděl hráč na jeho místě (cizí karty skryté).
-// Fáze 1: jednoduchá pravidla s náhodou. Výsledek je vždy platná akce pro engine.
+// Fáze 2: síla ruky (Monte Carlo proti náhodným rukám), pot odds, pozice, korekce na sázku soupeře.
+// Povaha bota je v parametrech (BOT_BASE); výsledek je vždy platná akce pro engine.
 const BOT_NAMES = ['Pepa', 'Franta', 'Mirek', 'Jarda', 'Láďa', 'Venca', 'Tonda', 'Zdeněk', 'Karel', 'Míla'];
+// tight: −1 hraje všechno … +1 jen silné ruce; aggr: −1 jen dorovnává … +1 často zvyšuje;
+// bluff: jak často sází bez ruky; noise: chyba v odhadu síly ruky (0 = přesný)
+const BOT_BASE = { tight: 0, aggr: 0, bluff: 0.1, noise: 0.05 };
+
+// ---- rychlé vyhodnocení 7 karet (karta = rank*4 + barva, rank 2–14) ----
+const BOT_SUIT = { s: 0, h: 1, d: 2, c: 3 };
+function botCard(c){ return rv(c[0]) * 4 + BOT_SUIT[c[1]]; }
+function botStraightTop(m){
+  if (m & (1 << 14)) m |= 2;                       // eso jako jednička
+  for (let t = 14; t >= 5; t--) if (((m >> (t - 4)) & 31) === 31) return t;
+  return 0;
+}
+function botTopBits(m, n){ const o = []; for (let r = 14; r >= 2 && o.length < n; r--) if (m & (1 << r)) o.push(r); return o; }
+function botPack(cat, k){ let v = cat; for (let i = 0; i < 5; i++) v = v * 16 + (k[i] || 0); return v; }
+function botEval(cs){
+  const rc = new Array(15).fill(0), sm = [0, 0, 0, 0], sc = [0, 0, 0, 0];
+  let all = 0;
+  for (const c of cs){ const r = c >> 2, su = c & 3; rc[r]++; sm[su] |= 1 << r; sc[su]++; all |= 1 << r; }
+  for (let su = 0; su < 4; su++) if (sc[su] >= 5){
+    const t = botStraightTop(sm[su]);
+    return t ? botPack(8, [t]) : botPack(5, botTopBits(sm[su], 5));
+  }
+  const q = [], t = [], p = [], one = [];
+  for (let r = 14; r >= 2; r--){ const n = rc[r]; if (n === 4) q.push(r); else if (n === 3) t.push(r); else if (n === 2) p.push(r); else if (n === 1) one.push(r); }
+  if (q.length){ const k = [...t, ...p, ...one].sort((a, b) => b - a)[0]; return botPack(7, [q[0], k]); }
+  if (t.length && (t.length > 1 || p.length)) return botPack(6, [t[0], t.length > 1 ? Math.max(t[1], p[0] || 0) : p[0]]);
+  const st = botStraightTop(all);
+  if (st) return botPack(4, [st]);
+  if (t.length) return botPack(3, [t[0], ...one.slice(0, 2)]);
+  if (p.length >= 2){ const k = [...p.slice(2), ...one].sort((a, b) => b - a)[0]; return botPack(2, [p[0], p[1], k]); }
+  if (p.length) return botPack(1, [p[0], ...one.slice(0, 3)]);
+  return botPack(0, one.slice(0, 5));
+}
+// ---- síla startovní ruky: Chenův vzorec → percentil mezi všemi 1326 kombinacemi (1 = nejlepší) ----
+function botChen(r1, r2, suited){
+  const hi = Math.max(r1, r2), lo = Math.min(r1, r2);
+  const val = r => r === 14 ? 10 : r === 13 ? 8 : r === 12 ? 7 : r === 11 ? 6 : r / 2;
+  if (hi === lo) return Math.max(5, val(hi) * 2);
+  let sc = val(hi) + (suited ? 2 : 0);
+  const gap = hi - lo - 1;
+  sc -= gap === 0 ? 0 : gap === 1 ? 1 : gap === 2 ? 2 : gap === 3 ? 4 : 5;
+  if (gap <= 1 && hi < 12) sc += 1;
+  return Math.ceil(sc);
+}
+let BOT_PCT = null;
+function botPct(c1, c2){                      // podíl kombinací, které jsou stejně dobré nebo lepší
+  if (!BOT_PCT){
+    const list = [];
+    for (let a = 8; a < 60; a++) for (let b = a + 1; b < 60; b++) list.push(botChen(a >> 2, b >> 2, (a & 3) === (b & 3)));
+    BOT_PCT = {};
+    for (let ch = -2; ch <= 20; ch++) BOT_PCT[ch] = list.filter(x => x >= ch).length / list.length;
+  }
+  return BOT_PCT[botChen(c1 >> 2, c2 >> 2, (c1 & 3) === (c2 & 3))];
+}
+// podíl banku, který ruka v průměru vyhraje; ranges[i] = horní podíl startovních rukou soupeře i (1 = jakákoli)
+function botEquity(hole, board, ranges, iters){
+  if (typeof ranges === 'number') ranges = new Array(ranges).fill(1);
+  const used = new Set([...hole, ...board].map(botCard));
+  const deck = [];
+  for (let r = 2; r <= 14; r++) for (let su = 0; su < 4; su++){ const c = r * 4 + su; if (!used.has(c)) deck.push(c); }
+  const H = hole.map(botCard), B = board.map(botCard), len = deck.length, nOpp = ranges.length;
+  const mine = new Array(7), opp = new Array(7), oc = new Array(2 * nOpp);
+  let top = 0;
+  const draw = () => { const j = top + Math.floor(Math.random() * (len - top)); const x = deck[j]; deck[j] = deck[top]; deck[top++] = x; return x; };
+  let won = 0;
+  for (let it = 0; it < iters; it++){
+    top = 0;
+    for (let o = 0; o < nOpp; o++){
+      for (let t = 0; ; t++){
+        const c1 = draw(), c2 = draw();
+        if (ranges[o] >= 1 || t >= 30 || botPct(c1, c2) <= ranges[o]){ oc[2 * o] = c1; oc[2 * o + 1] = c2; break; }
+        top -= 2;                             // karty zpět do balíčku, losuje se znovu
+      }
+    }
+    let n = 0;
+    for (const c of H) mine[n++] = c;
+    for (const c of B) mine[n++] = c;
+    while (n < 7) mine[n++] = draw();
+    const me = botEval(mine);
+    let ties = 0, lost = false;
+    for (let o = 0; o < nOpp && !lost; o++){
+      opp[0] = oc[2 * o]; opp[1] = oc[2 * o + 1];
+      for (let i = 2; i < 7; i++) opp[i] = mine[i];
+      const v = botEval(opp);
+      if (v > me) lost = true; else if (v === me) ties++;
+    }
+    if (!lost) won += 1 / (ties + 1);
+  }
+  return won / iters;
+}
 
 function botLegal(V, id){
   const h = V.hand;
@@ -786,22 +877,84 @@ function botSize(L, frac){
   if (L.maxTo - x < L.step) x = L.maxTo;   // zbytek pod jeden blind se nevyplatí držet
   return x;
 }
-function botDecide(V, id, rand){
+// pozice: 1 = v tomhle kole hraje poslední, 0 = první
+function botPosition(h, id){
+  const n = h.seats.length;
+  const me = h.seats.findIndex(s => s.id === id);
+  const lastI = h.stage === 'preflop' ? h.seats.findIndex(s => s.id === h.bbId) : h.di;
+  const can = s => !s.folded && !s.allIn;
+  let after = 0, total = 0;
+  for (let k = 1; k < n; k++){ const s = h.seats[(me + k) % n]; if (can(s)) total++; }
+  for (let i = me; i !== lastI; ){ i = (i + 1) % n; if (can(h.seats[i]) && i !== me) after++; }
+  return total ? 1 - after / total : 1;
+}
+const clamp01 = x => Math.max(0, Math.min(1, x));
+
+function botDecide(V, id, rand, persona){
   rand = rand || Math.random;
-  const L = botLegal(V, id);
+  const L = botLegal(V, id), h = L.h;
+  const me = V.players.find(x => x.id === id);
+  const k = Object.assign({}, BOT_BASE, (me && me.persona) || {}, persona || {});
+  const pre = h.stage === 'preflop';
+  const pos = botPosition(h, id);
+  const others = h.seats.filter(s => s.id !== id && !s.folded);
+  const opps = others.length || 1;
+  const facing = pre ? h.currentBet > h.bb : L.toCall > 0;
+  // proti sázce počítá jen s těmi, kdo už do ní vložili; hráči za ním většinou složí
+  const contest = facing ? others.filter(s => s.bet >= h.currentBet || s.allIn) : others;
+  const nEq = contest.length || 1;
+  // před flopem: kdo zvýšil, má lepší ruce (čím větší zvýšení, tím užší výběr)
+  const ranges = (contest.length ? contest : others.slice(0, 1)).map(s => {
+    if (!pre || s.bet <= h.bb) return 1;
+    return Math.max(0.08, Math.min(0.45, 0.9 / (s.bet / h.bb)));
+  });
+
+  // síla ruky: equity + chyba odhadu
+  let eq = botEquity(L.seat.cards, h.board, ranges, pre ? 400 : 500);
+  eq = clamp01(eq + (rand() * 2 - 1) * k.noise);
+  // po flopu: kdo sází, obvykle něco má; equity se snižuje podle velikosti sázky vůči banku před ní
+  if (!pre && facing){
+    const before = Math.max(1, L.pot - h.seats.reduce((a, s) => a + s.bet, 0));
+    eq *= 1 - 0.3 * Math.min(1, L.toCall / before);
+  }
+  const fair = 1 / (nEq + 1);
+  const rs = eq / fair;                                  // 1 = průměrná ruka proti soupeřům ve hře
+
   const r = rand();
   if (L.toCall === 0){
-    if (L.canRaise && r < 0.25) return { type: 'raise', amount: botSize(L, 0.4 + rand() * 0.6) };
+    const strong = (pre ? 1.5 : 1.35) + 0.25 * k.tight - 0.2 * k.aggr;
+    const medium = (pre ? 1.25 : 1.1) + 0.2 * k.tight - 0.1 * k.aggr;
+    if (L.canRaise && rs > strong && r < 0.75 + 0.2 * k.aggr) return { type: 'raise', amount: botSize(L, 0.5 + rand() * 0.35) };
+    if (L.canRaise && rs > medium && r < (pre ? 0.45 : 0.6) + 0.2 * k.aggr) return { type: 'raise', amount: botSize(L, 0.4 + rand() * 0.25) };
+    // bluff: častěji v pozdní pozici a proti menšímu počtu soupeřů
+    const bl = k.bluff * (0.5 + pos) * (opps <= 2 ? 1.3 : 0.7);
+    if (L.canRaise && rand() < bl) return { type: 'raise', amount: botSize(L, 0.45 + rand() * 0.3) };
     return { type: 'check' };
   }
-  const cost = L.toCall / (L.p.chips + L.seat.bet);           // kolik ze zbytku stacku stojí dorovnat
-  const foldP = Math.min(0.85, 0.12 + cost * 1.6);
-  if (r < foldP) return { type: 'fold' };
-  if (L.canRaise && r > 0.9) return { type: 'raise', amount: botSize(L, 0.6 + rand() * 0.6) };
+
+  // cena dorovnání vs. bank; s výhledem na další kola (implied odds) a na hráče, kteří ještě dorovnají
+  const behind = h.seats.filter(s => !s.folded && !s.allIn && s.id !== id && s.bet < h.currentBet).length;
+  const potEff = L.pot + L.toCall + L.toCall * 0.4 * behind;
+  let need = L.toCall / potEff;
+  if (h.stage !== 'river') need *= 0.85;
+  const stackShare = L.toCall / Math.max(1, L.p.chips);   // jak velkou část zbytku stacku riskuje
+  need += 0.05 * k.tight + 0.12 * Math.min(1, stackShare) + (pre ? 0.09 : 0.03) - 0.03 * pos + (facing ? 0.02 * behind : 0);
+
+  if (eq < need){
+    // občasný bluff-raise, jen když to nestojí moc
+    if (L.canRaise && stackShare < 0.25 && rand() < k.bluff * 0.25 * (0.5 + pos)) return { type: 'raise', amount: botSize(L, 0.7 + rand() * 0.3) };
+    return { type: 'fold' };
+  }
+  // před flopem bez předchozího zvýšení: s dobrou rukou otevře zvýšením, jinak dorovná (limp)
+  const openAt = 1.2 + 0.25 * k.tight - 0.15 * k.aggr;
+  if (pre && !facing && L.canRaise && rs > openAt && rand() < clamp01(0.4 + 0.45 * (rs - openAt) + 0.2 * k.aggr))
+    return { type: 'raise', amount: botSize(L, 0.6 + rand() * 0.4) };
+  const strong = (pre ? 1.55 : 1.65) + 0.3 * k.tight - 0.3 * k.aggr;
+  if (L.canRaise && rs > strong && r < (pre ? 0.5 : 0.6) + 0.25 * k.aggr) return { type: 'raise', amount: botSize(L, 0.65 + rand() * 0.4) };
   return { type: 'call' };
 }
 
-if (typeof module !== 'undefined') module.exports.botDecide = botDecide;
+if (typeof module !== 'undefined') Object.assign(module.exports, { botDecide, botEval, botEquity, botCard, botPosition, botPct, BOT_BASE });
 </script>
 <script>
 const $ = id => document.getElementById(id);
